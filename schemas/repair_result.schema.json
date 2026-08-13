@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "bug_id",
+    "success",
+    "pre_fix_test_passed",
+    "post_fix_test_passed",
+    "commit_sha",
+    "files_changed"
+  ],
+  "properties": {
+    "bug_id": { "type": "string" },
+    "success": { "type": "boolean" },
+    "pre_fix_test_passed": { "type": "boolean" },
+    "post_fix_test_passed": { "type": "boolean" },
+    "commit_sha": { "type": ["string", "null"] },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "targeted_tests_run": { "type": "array", "items": { "type": "string" } },
+    "targeted_tests_passed": { "type": "boolean" },
+    "live_repro_passed": { "type": "boolean" },
+    "error_message": { "type": ["string", "null"] }
+  }
+}

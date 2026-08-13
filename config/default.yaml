@@ -1,0 +1,58 @@
+mesa:
+  repo_path: /home/yasin/Desktop/MESA
+  python_path: /home/yasin/Desktop/MESA/.venv/bin/python
+  runtime_profile: combined
+  port: 18000
+  gateway_port: 18765
+
+candidate:
+  worktree_root: /home/yasin/Desktop/MESA-QA-candidate
+  branch_prefix: qa/autonomous
+  reuse_existing: false
+
+run:
+  duration_hours: 8
+  profile: lite
+  seed: 42
+  cadence_seconds_min: 5
+  cadence_seconds_max: 15
+  epoch_actions: 25
+  restart_every_minutes: 90
+
+codex:
+  binary: codex
+  tester_model: null
+  repair_model: null
+  tester_timeout_seconds: 300
+  repair_timeout_seconds: 1200
+  json_events: true
+
+repair:
+  enabled: true
+  max_repairs_per_run: 10
+  require_pre_fix_failure: true
+  commit_verified_repairs: true
+  auto_push: false
+  auto_merge: false
+
+verification:
+  targeted_tests_only_per_fix: true
+  full_suite_at_end: true
+  full_suite_every_n_repairs: 3
+
+resources:
+  sample_seconds: 60
+  warn_rss_mb: 6000
+  hard_stop_rss_mb: 12000
+
+safety:
+  require_clean_main: true
+  forbid_main_branch_write: true
+  forbid_network_in_repair: true
+  max_auto_changed_files: 8
+  max_auto_changed_lines: 400
+  forbidden_repair_paths:
+    - .github/
+    - deploy/
+    - uv.lock
+    - pyproject.toml

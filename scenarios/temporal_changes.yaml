@@ -1,0 +1,33 @@
+name: temporal_changes
+description: Tests updating entity facts over time and checking current vs historical truth.
+events:
+  - id: evt_tc_01
+    kind: remember
+    entity: project:atlas
+    field: backend
+    value: FastAPI
+    text: "Atlas backend started on FastAPI."
+
+  - id: evt_tc_02
+    kind: correct
+    entity: project:atlas
+    field: backend
+    old_value: FastAPI
+    value: Spring Boot
+    text: "Atlas backend has been migrated from FastAPI to Spring Boot."
+
+  - id: evt_tc_03
+    kind: recall
+    entity: project:atlas
+    field: backend
+    mode: current
+    question: "What backend does Atlas currently use?"
+    expected: "Spring Boot"
+
+  - id: evt_tc_04
+    kind: recall
+    entity: project:atlas
+    field: backend
+    mode: historical
+    question: "What backend did Atlas use before Spring Boot?"
+    expected: "FastAPI"

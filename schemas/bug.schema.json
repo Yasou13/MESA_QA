@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "bug_id",
+    "run_id",
+    "first_seen_at",
+    "severity",
+    "category",
+    "scenario_id",
+    "steps",
+    "expected",
+    "actual",
+    "repeat_count",
+    "candidate_commit_before"
+  ],
+  "properties": {
+    "bug_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "first_seen_at": { "type": "string" },
+    "severity": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+    "category": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "preconditions": { "type": "object" },
+    "steps": { "type": "array" },
+    "expected": { "type": "object" },
+    "actual": { "type": "object" },
+    "repeat_count": { "type": "integer" },
+    "candidate_commit_before": { "type": "string" },
+    "storage_snapshot_id": { "type": ["string", "null"] }
+  }
+}

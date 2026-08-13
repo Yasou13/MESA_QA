@@ -1,0 +1,13 @@
+run:
+  profile: lite
+  cadence_seconds_min: 5
+  cadence_seconds_max: 15
+  parallel_actions: 1
+  restart_every_minutes: 90
+
+repair:
+  enabled: true
+  max_repairs_per_run: 10
+
+resources:
+  sample_seconds: 60

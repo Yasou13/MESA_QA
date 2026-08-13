@@ -1,0 +1,23 @@
+name: correction_and_forget
+description: Tests memory improvement/correction and explicit forget operations.
+events:
+  - id: evt_cf_01
+    kind: remember
+    entity: user:alex
+    field: role
+    value: Engineer
+    text: "Alex joined team Atlas as a Software Engineer."
+
+  - id: evt_cf_02
+    kind: forget
+    entity: user:alex
+    field: role
+    text: "Remove information about Alex's role."
+
+  - id: evt_cf_03
+    kind: recall
+    entity: user:alex
+    field: role
+    mode: forgotten
+    question: "What is Alex's role?"
+    expected: null

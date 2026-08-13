@@ -1,0 +1,19 @@
+name: restart_durability
+description: Tests memory retention across MESA process restarts.
+events:
+  - id: evt_rd_01
+    kind: remember
+    entity: system:config
+    field: environment
+    value: Staging
+    text: "MESA deployment target is set to Staging."
+
+  - id: evt_rd_02
+    kind: restart_runtime
+
+  - id: evt_rd_03
+    kind: recall
+    entity: system:config
+    field: environment
+    question: "What is the configured MESA environment?"
+    expected: "Staging"

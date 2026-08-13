@@ -1,0 +1,30 @@
+name: basic_memory
+description: Tests basic memory creation and natural-language recall across entities.
+events:
+  - id: evt_bm_01
+    kind: remember
+    entity: project:atlas
+    field: backend
+    value: FastAPI
+    text: "Project Atlas is built using FastAPI as its primary backend framework."
+
+  - id: evt_bm_02
+    kind: recall
+    entity: project:atlas
+    field: backend
+    question: "What backend framework does Project Atlas use?"
+    expected: "FastAPI"
+
+  - id: evt_bm_03
+    kind: remember
+    entity: project:atlas
+    field: database
+    value: PostgreSQL
+    text: "Project Atlas stores relational data in PostgreSQL."
+
+  - id: evt_bm_04
+    kind: recall
+    entity: project:atlas
+    field: database
+    question: "Which database does Atlas use?"
+    expected: "PostgreSQL"

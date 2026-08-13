@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "action_id",
+    "scenario_event_id",
+    "tools_called",
+    "actual",
+    "tester_assessment",
+    "reason",
+    "needs_recheck"
+  ],
+  "properties": {
+    "action_id": { "type": "string" },
+    "scenario_event_id": { "type": "string" },
+    "tools_called": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "actual": {
+      "type": "object",
+      "properties": {
+        "answer": { "type": ["string", "null"] },
+        "memory_ids": { "type": "array", "items": { "type": "string" } },
+        "operation_ids": { "type": "array", "items": { "type": "string" } },
+        "raw_response": { "type": ["object", "array", "string", "number", "boolean", "null"] }
+      }
+    },
+    "tester_assessment": {
+      "type": "string",
+      "enum": ["pass", "suspicious", "infra_error"]
+    },
+    "reason": { "type": "string" },
+    "needs_recheck": { "type": "boolean" }
+  }
+}

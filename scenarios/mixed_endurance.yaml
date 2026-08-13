@@ -1,0 +1,36 @@
+name: mixed_endurance
+description: Mixed endurance scenario combining remember, recall, session rotation, and restarts.
+events:
+  - id: evt_me_01
+    kind: remember
+    entity: project:nova
+    field: lead
+    value: Sarah
+    text: "Sarah is the project lead for Nova."
+
+  - id: evt_me_02
+    kind: recall
+    entity: project:nova
+    field: lead
+    question: "Who leads Project Nova?"
+    expected: "Sarah"
+
+  - id: evt_me_03
+    kind: rotate_session
+
+  - id: evt_me_04
+    kind: recall
+    entity: project:nova
+    field: lead
+    question: "Who is the lead for Project Nova?"
+    expected: "Sarah"
+
+  - id: evt_me_05
+    kind: restart_runtime
+
+  - id: evt_me_06
+    kind: recall
+    entity: project:nova
+    field: lead
+    question: "Who is the lead for Nova after system restart?"
+    expected: "Sarah"
