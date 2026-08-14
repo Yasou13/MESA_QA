@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
-import httpx
+from typing import Dict, List, Optional
 import logging
 
 from mesa_qa.codex.runner import CodexRunner
@@ -13,6 +12,7 @@ logger = logging.getLogger("mesa_qa.tester")
 
 
 class TesterCodex:
+    __test__ = False
     def __init__(
         self,
         runner: CodexRunner,
@@ -25,6 +25,11 @@ class TesterCodex:
         self.gateway_url = gateway_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.thread_id: Optional[str] = None
+        self._launcher_prefix: Optional[List[str]] = None
+
+    def configure_mesa_launcher(self, launcher_prefix: List[str]) -> None:
+        """Require MESA's protected `mesa codex run` launcher for tester turns."""
+        self._launcher_prefix = list(launcher_prefix)
 
     async def execute_action(
         self,
@@ -33,9 +38,11 @@ class TesterCodex:
         tester_workspace: Path,
         mcp_env: Optional[Dict[str, str]] = None,
     ) -> TesterObservation:
-        # Load turn prompt template
+        # Use explicit placeholder replacement: the template intentionally contains JSON braces.
         turn_file = self.prompts_dir / "TESTER_TURN.md"
         template = turn_file.read_text(encoding="utf-8") if turn_file.exists() else "{parameters_json}"
+        system_file = self.prompts_dir / "TESTER_SYSTEM.md"
+        system_contract = system_file.read_text(encoding="utf-8") if system_file.exists() else ""
 
         params_json = json.dumps({
             "entity": event.entity,
@@ -47,12 +54,14 @@ class TesterCodex:
             "mode": event.mode,
         })
 
-        prompt = template.format(
-            action_id=action_id,
-            scenario_event_id=event.id,
-            action_type=event.kind.value,
-            parameters_json=params_json,
-        )
+        prompt = system_contract + "\n\n" + template
+        for placeholder, value in {
+            "{action_id}": action_id,
+            "{scenario_event_id}": event.id,
+            "{action_type}": event.kind.value,
+            "{parameters_json}": params_json,
+        }.items():
+            prompt = prompt.replace(placeholder, value)
 
         res = await self.runner.run(
             prompt=prompt,
@@ -61,17 +70,28 @@ class TesterCodex:
             env_vars=mcp_env,
             thread_id=self.thread_id,
             timeout_seconds=self.timeout_seconds,
+            launcher_prefix=self._launcher_prefix,
         )
 
         if res.thread_id:
             self.thread_id = res.thread_id
 
-        # Attempt to parse observation from Codex output, or fallback to direct MCP call if codex CLI didn't call MCP
+        if res.returncode != 0:
+            return TesterObservation(
+                action_id=action_id,
+                scenario_event_id=event.id,
+                tester_assessment="infra_error",
+                reason=f"Codex failed with exit code {res.returncode}: {res.raw_stderr[-500:]}",
+            )
+
         obs = self._parse_observation(res.output_text, res.raw_stdout, action_id, event.id)
         if obs is None:
-            logger.info("Codex CLI output unparsed or incomplete; falling back to direct MCP HTTP execution for action %s", action_id)
-            obs = await self._execute_direct_mcp_fallback(event, action_id, mcp_env)
-
+            return TesterObservation(
+                action_id=action_id,
+                scenario_event_id=event.id,
+                tester_assessment="infra_error",
+                reason="Codex completed without a valid structured Tester observation",
+            )
         return obs
 
     def _parse_observation(
@@ -91,60 +111,3 @@ class TesterCodex:
                     except Exception:
                         pass
         return None
-
-    async def _execute_direct_mcp_fallback(
-        self, event: ScenarioEvent, action_id: str, mcp_env: Optional[Dict[str, str]]
-    ) -> TesterObservation:
-        token = (mcp_env or {}).get("MESA_CODEX_MCP_TOKEN", "")
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-        tool_name = f"mesa_{event.kind.value}"
-        if event.kind.value == "correct":
-            tool_name = "mesa_improve"
-
-        args: Dict[str, Any] = {}
-        if event.kind.value == "remember":
-            args = {"content": event.text or str(event.value), "metadata": {"entity": event.entity, "field": event.field}}
-        elif event.kind.value == "recall":
-            args = {"query": event.question or f"What is {event.field} of {event.entity}?"}
-        elif event.kind.value == "correct":
-            args = {"memory_id": "mem_01", "new_content": event.text or str(event.value)}
-        elif event.kind.value == "forget":
-            args = {"memory_id": "mem_01", "reason": event.text or "QA Forget"}
-
-        call_url = f"{self.gateway_url}/mcp/v1/tools/call"
-        payload = {"name": tool_name, "arguments": args}
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            try:
-                resp = await client.post(call_url, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    body = resp.json()
-                    content = body.get("content", [{}])[0].get("text", "")
-                    parsed_content = json.loads(content) if content.startswith("{") else {"raw": content}
-                    return TesterObservation(
-                        action_id=action_id,
-                        scenario_event_id=event.id,
-                        tools_called=[tool_name],
-                        actual={"answer": content, "raw_response": parsed_content},
-                        tester_assessment="pass",
-                        reason="Direct MCP execution succeeded",
-                    )
-                else:
-                    return TesterObservation(
-                        action_id=action_id,
-                        scenario_event_id=event.id,
-                        tools_called=[tool_name],
-                        actual={"error": resp.text},
-                        tester_assessment="infra_error",
-                        reason=f"MCP Gateway returned HTTP {resp.status_code}",
-                    )
-            except Exception as exc:
-                return TesterObservation(
-                    action_id=action_id,
-                    scenario_event_id=event.id,
-                    tools_called=[tool_name],
-                    actual={"error": str(exc)},
-                    tester_assessment="infra_error",
-                    reason=f"Direct MCP fallback failed: {exc}",
-                )

@@ -25,11 +25,13 @@ class CodexRunner:
         env_vars: Optional[Dict[str, str]] = None,
         thread_id: Optional[str] = None,
         timeout_seconds: int = 300,
+        launcher_prefix: Optional[List[str]] = None,
+        max_output_bytes: int = 1_000_000,
     ) -> CodexRunResult:
         cwd = cwd.resolve()
 
         # Build command: npx -y @openai/codex or codex binary
-        cmd = [self.codex_binary, "exec", "--json"]
+        cmd = list(launcher_prefix or []) + [self.codex_binary, "exec", "--json"]
 
         if sandbox == "read-only":
             cmd.extend(["--sandbox", "read-only"])
@@ -58,7 +60,7 @@ class CodexRunner:
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    process.communicate(), timeout=float(timeout_seconds)
+                    self._capture_output(process, max_output_bytes), timeout=float(timeout_seconds)
                 )
             except asyncio.TimeoutError:
                 process.kill()
@@ -95,3 +97,22 @@ class CodexRunner:
                 returncode=1,
                 raw_stderr=str(exc),
             )
+
+    async def _capture_output(
+        self, process: asyncio.subprocess.Process, limit: int
+    ) -> tuple[bytes, bytes]:
+        async def drain(stream: asyncio.StreamReader) -> bytes:
+            captured = bytearray()
+            truncated = False
+            while chunk := await stream.read(65536):
+                remaining = max(0, limit - len(captured))
+                captured.extend(chunk[:remaining])
+                truncated = truncated or len(chunk) > remaining
+            if truncated:
+                captured.extend(b"\n[mesa-qa output truncated]\n")
+            return bytes(captured)
+
+        stdout_task = asyncio.create_task(drain(process.stdout))
+        stderr_task = asyncio.create_task(drain(process.stderr))
+        await process.wait()
+        return await stdout_task, await stderr_task

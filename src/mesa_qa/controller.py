@@ -115,7 +115,8 @@ class QAController:
             gateway_url=self.process_mgr.mcp_gateway.gateway_url,
         )
         tester_ws = self.run_dir / "tester_workspace"
-        bootstrap.prepare_tester_workspace(tester_ws)
+        binding = bootstrap.prepare_tester_workspace(tester_ws)
+        self.tester.configure_mesa_launcher(binding["launcher_prefix"])
 
         # Load Scenarios
         self.scenario_engine.load_suite()

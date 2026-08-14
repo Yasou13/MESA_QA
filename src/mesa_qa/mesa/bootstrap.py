@@ -22,7 +22,10 @@ class MESABootstrap:
         logger.info("Bootstrapping tester workspace at %s", tester_dir)
         binding_res = self.binding_mgr.install_binding(tester_workspace=tester_dir)
         doctor_res = self.binding_mgr.run_doctor(tester_workspace=tester_dir)
+        status_res = self.binding_mgr.run_status(tester_workspace=tester_dir)
         return {
             "binding": binding_res,
             "doctor": doctor_res,
+            "status": status_res,
+            "launcher_prefix": self.binding_mgr.launcher_prefix(tester_dir),
         }
