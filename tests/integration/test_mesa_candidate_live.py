@@ -35,7 +35,7 @@ async def test_live_mesa_candidate_startup():
 
         # Verify MESA Candidate Health
         health = await check_mesa_health(pm.mesa_runtime.base_url, api_key=pm.mesa_runtime.api_key)
-        assert health["status"] in ("healthy", "ready", "unhealthy")  # Reachable backend
+        assert health["status"] == "healthy"
 
     finally:
         await pm.stop_all()
