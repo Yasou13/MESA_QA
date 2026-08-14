@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,6 +67,7 @@ class QAController:
         self._repairs: List[Dict[str, Any]] = []
         self._pause_requested = False
         self._stop_requested = False
+        self._rng = random.Random(config.run.seed)
 
     def _on_state_change(self, old_state: State, new_state: State) -> None:
         asyncio.create_task(self._persist_state())
@@ -84,6 +86,11 @@ class QAController:
             "action_count": self._action_count,
             "confirmed_bug_count": len(self._bugs),
             "verified_repair_count": len([r for r in self._repairs if r.get("status") == "VERIFIED"]),
+            "scenario_cursor": self.scenario_engine.cursor,
+            "scenario_seed": self.config.run.seed,
+            "tester_thread_id": self.tester.thread_id,
+            "mesa_pid": self.process_mgr.mesa_runtime._process.pid if self.process_mgr.mesa_runtime and self.process_mgr.mesa_runtime._process else None,
+            "mcp_gateway_pid": self.process_mgr.mcp_gateway._process.pid if self.process_mgr.mcp_gateway and self.process_mgr.mcp_gateway._process else None,
         }
         await self.controller_db.save_run_state(state_dict)
 
@@ -130,6 +137,20 @@ class QAController:
         max_duration_sec = self.config.run.duration_hours * 3600
 
         while time.time() - start_time < max_duration_sec:
+            control = await self.controller_db.get_control(self.run_id)
+            if control == "pause":
+                self._pause_requested = True
+            elif control == "resume":
+                self._pause_requested = False
+            elif control == "stop":
+                self._stop_requested = True
+            if self.state_machine.current == State.WAITING_FOR_CODEX:
+                if control == "resume":
+                    self.state_machine.transition_to(State.RUNNING)
+                    await self._persist_state()
+                else:
+                    await asyncio.sleep(1.0)
+                    continue
             if self._stop_requested:
                 logger.info("Stop requested. Exiting endurance loop.")
                 break
@@ -159,7 +180,7 @@ class QAController:
             await self._process_event(event)
 
             # Cadence sleep
-            cadence = self.config.run.cadence_seconds_min
+            cadence = self._rng.uniform(self.config.run.cadence_seconds_min, self.config.run.cadence_seconds_max)
             await asyncio.sleep(cadence)
 
         self.state_machine.transition_to(State.STOPPING)
@@ -194,6 +215,10 @@ class QAController:
         tester_ws = self.run_dir / "tester_workspace"
         env = os.environ.copy()
         obs = await self.tester.execute_action(event, action_id, tester_ws, mcp_env=env)
+        if obs.tester_assessment == "infra_error" and "Codex" in obs.reason:
+            self.state_machine.transition_to(State.WAITING_FOR_CODEX)
+            await self._persist_state()
+            return
 
         # 3. Judge output against Oracle
         verdict = await self.judge.judge(event, obs, self.oracle_eval)

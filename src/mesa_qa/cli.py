@@ -16,6 +16,7 @@ from mesa_qa.config import QAConfig
 from mesa_qa.controller import QAController
 from mesa_qa.runtime.worktree import WorktreeManager
 from mesa_qa.storage.paths import get_user_qa_root, get_run_dir, assert_safe_paths, discover_normal_mesa_storage
+from mesa_qa.storage.controller_db import ControllerDB
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("mesa_qa.cli")
@@ -71,11 +72,11 @@ def main() -> None:
     elif args.command == "status":
         _cmd_status(args)
     elif args.command == "pause":
-        print("Pause signal registered.")
+        asyncio.run(_cmd_control("pause"))
     elif args.command == "resume":
-        print("Resume signal registered.")
+        asyncio.run(_cmd_control("resume"))
     elif args.command == "stop":
-        print("Stop signal registered.")
+        asyncio.run(_cmd_control("stop"))
     elif args.command == "report":
         _cmd_report(args)
     elif args.command == "teardown":
@@ -177,6 +178,18 @@ def _cmd_status(args: argparse.Namespace) -> None:
         print(f"Active/Past Runs: {runs}")
     else:
         print("No runs found yet.")
+
+
+async def _cmd_control(action: str) -> None:
+    runs = get_user_qa_root() / "runs"
+    candidates = sorted((path for path in runs.iterdir() if path.is_dir() and (path / "controller.db").exists()), key=lambda path: path.stat().st_mtime) if runs.exists() else []
+    if not candidates:
+        raise SystemExit("No persisted MESA-QA run is available for control.")
+    run = candidates[-1]
+    db = ControllerDB(run / "controller.db")
+    await db.initialize()
+    await db.request_control(run.name, action)
+    print(f"{action.title()} requested for run {run.name}.")
 
 
 def _cmd_report(args: argparse.Namespace) -> None:

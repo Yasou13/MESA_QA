@@ -28,10 +28,22 @@ class ControllerDB:
                     action_count INT DEFAULT 0,
                     confirmed_bug_count INT DEFAULT 0,
                     verified_repair_count INT DEFAULT 0,
+                    scenario_cursor INT DEFAULT 0,
+                    scenario_seed INT,
+                    tester_thread_id TEXT,
+                    mesa_pid INT,
+                    mcp_gateway_pid INT,
                     last_updated_at TEXT
                 );
             """)
 
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS control_requests (
+                    run_id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    requested_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+            """)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS action_log (
                     action_id TEXT PRIMARY KEY,
@@ -90,8 +102,9 @@ class ControllerDB:
                 INSERT INTO run_state (
                     run_id, status, started_at, planned_end_at, baseline_main_head,
                     candidate_branch, candidate_head, candidate_worktree, qa_storage_root,
-                    current_epoch, action_count, confirmed_bug_count, verified_repair_count, last_updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                current_epoch, action_count, confirmed_bug_count, verified_repair_count, last_updated_at
+                , scenario_cursor, scenario_seed, tester_thread_id, mesa_pid, mcp_gateway_pid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     status=excluded.status,
                     planned_end_at=excluded.planned_end_at,
@@ -104,6 +117,11 @@ class ControllerDB:
                     action_count=excluded.action_count,
                     confirmed_bug_count=excluded.confirmed_bug_count,
                     verified_repair_count=excluded.verified_repair_count,
+                    scenario_cursor=excluded.scenario_cursor,
+                    scenario_seed=excluded.scenario_seed,
+                    tester_thread_id=excluded.tester_thread_id,
+                    mesa_pid=excluded.mesa_pid,
+                    mcp_gateway_pid=excluded.mcp_gateway_pid,
                     last_updated_at=datetime('now')
             """, (
                 state["run_id"],
@@ -119,6 +137,8 @@ class ControllerDB:
                 state.get("action_count", 0),
                 state.get("confirmed_bug_count", 0),
                 state.get("verified_repair_count", 0),
+                state.get("scenario_cursor", 0), state.get("scenario_seed"), state.get("tester_thread_id"),
+                state.get("mesa_pid"), state.get("mcp_gateway_pid"),
             ))
             await db.commit()
 
@@ -130,6 +150,17 @@ class ControllerDB:
                 if row:
                     return dict(row)
                 return None
+
+    async def request_control(self, run_id: str, action: str) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("INSERT INTO control_requests(run_id, action) VALUES (?, ?) ON CONFLICT(run_id) DO UPDATE SET action=excluded.action, requested_at=datetime('now')", (run_id, action))
+            await db.commit()
+
+    async def get_control(self, run_id: str) -> Optional[str]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT action FROM control_requests WHERE run_id = ?", (run_id,)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else None
 
     async def record_action(
         self,
