@@ -1,6 +1,7 @@
 import pytest
 
 from mesa_qa.storage.paths import assert_safe_paths, get_run_dir
+from mesa_qa.runtime.worktree import WorktreeManager
 
 
 def test_assert_safe_paths_valid(tmp_path):
@@ -54,3 +55,20 @@ def test_get_run_dir_rejects_preexisting_storage_symlink(tmp_path):
     (run / "mesa-storage").symlink_to(target, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
         get_run_dir("safe-run", root)
+
+
+def test_main_integrity_snapshot_allows_dirty_baseline_then_detects_change(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "user.email", "qa@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "QA"], cwd=tmp_path, check=True)
+    (tmp_path / "tracked.txt").write_text("one")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
+    (tmp_path / "user-note.txt").write_text("existing")
+    manager = WorktreeManager(tmp_path, tmp_path / "candidates")
+    baseline = manager.capture_main_baseline()
+    manager.assert_main_unchanged(baseline)
+    (tmp_path / "another-user-note.txt").write_text("changed")
+    with pytest.raises(RuntimeError, match="P0 safety failure"):
+        manager.assert_main_unchanged(baseline)

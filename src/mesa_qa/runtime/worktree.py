@@ -29,6 +29,19 @@ class WorktreeManager:
             "is_clean": len(status) == 0,
         }
 
+    def capture_main_baseline(self) -> Dict[str, str]:
+        """Read-only integrity snapshot; dirty user work is allowed but immutable."""
+        return {
+            "head": self._run_git(self.main_repo, ["rev-parse", "HEAD"]).strip(),
+            "status": self._run_git(self.main_repo, ["status", "--porcelain=v1", "--untracked-files=all"]),
+            "tracked_diff": self._run_git(self.main_repo, ["diff", "--binary"]),
+        }
+
+    def assert_main_unchanged(self, baseline: Dict[str, str]) -> None:
+        current = self.capture_main_baseline()
+        if current != baseline:
+            raise RuntimeError("P0 safety failure: original MESA checkout changed during MESA-QA lifecycle")
+
     def create_candidate_worktree(self, run_id: str, baseline_commit: Optional[str] = None) -> Tuple[Path, str]:
         hygiene = self.check_main_hygiene()
         commit = baseline_commit or hygiene["head"]

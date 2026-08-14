@@ -116,8 +116,8 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
 
     try:
         hygiene = WorktreeManager(repo, cfg.candidate.worktree_root, cfg.candidate.branch_prefix).check_main_hygiene()
-        if cfg.safety.require_clean_main and hygiene["is_clean"] is not True:
-            issues.append("MESA main checkout is not clean (required by safety policy)")
+        if hygiene["is_clean"] is not True:
+            print(" - [WARN] MESA checkout has pre-existing changes; baseline snapshot will be enforced during QA")
         if cfg.candidate.worktree_root.resolve() == repo:
             issues.append("Candidate root cannot equal MESA main checkout")
         normal_storage = cfg.mesa.normal_storage_root or discover_normal_mesa_storage(repo)

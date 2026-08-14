@@ -68,6 +68,7 @@ class QAController:
         self._pause_requested = False
         self._stop_requested = False
         self._rng = random.Random(config.run.seed)
+        self._main_baseline: Optional[Dict[str, str]] = None
 
     def _on_state_change(self, old_state: State, new_state: State) -> None:
         asyncio.create_task(self._persist_state())
@@ -102,16 +103,19 @@ class QAController:
         # Step 1: Preflight
         self.state_machine.transition_to(State.PREFLIGHT)
         hygiene = self.process_mgr.worktree_mgr.check_main_hygiene()
+        self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
         logger.info("Main MESA repository baseline HEAD: %s (clean: %s)", hygiene["head"], hygiene["is_clean"])
 
         # Step 2: Create Candidate Worktree
         self.state_machine.transition_to(State.CREATE_CANDIDATE)
         candidate_wt = self.process_mgr.setup_worktree(self.run_id, baseline_commit=hygiene["head"])
+        self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
         logger.info("Candidate worktree ready at %s", candidate_wt)
 
         # Step 3: Start MESA Runtime
         self.state_machine.transition_to(State.START_MESA)
         await self.process_mgr.start_all()
+        self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
 
         # Step 4: Start MCP & Provision Binding
         self.state_machine.transition_to(State.START_MCP)
@@ -383,6 +387,8 @@ class QAController:
     async def shutdown(self) -> None:
         logger.info("Shutting down MESA-QA processes gracefully...")
         await self.process_mgr.stop_all()
+        if self._main_baseline is not None:
+            self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
 
         # Save final reports
         state_dict = await self.controller_db.get_run_state(self.run_id) or {"run_id": self.run_id, "status": self.state_machine.current.value}
