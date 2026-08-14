@@ -7,6 +7,8 @@
 - Remediation branch: `fix/second-pass-remediation-2026-08-14`
 - Original MESA checkout: read-only throughout this remediation.
 
+Latest read-only observation: MESA is now at `ada67dc5c623cbfe206b93a1dda5cf9d9ff3e6fd` and has an unrelated untracked file, `tests/test_d008_model_enabled_runtime_e2e.py`. It was not modified.
+
 ## Implemented and tested remediation
 
 | Audit ID | Status | Evidence |
@@ -20,17 +22,20 @@
 | MQA-2P-011 | PARTIAL | Added hard-gate unit coverage for paths, prompt, Codex failure, truth/replay, seed/reset, thread rotation and synthetic-regression refusal. |
 | MQA-2P-012 | PARTIAL | Lite cadence restored to 45–120 seconds and repair is disabled by default. Resource-stop/retention wiring remains outstanding. |
 | MQA-2P-001 | PARTIAL | Repair is default-disabled and cannot synthesize a captured-data regression or use `git add .`; it blocks without a genuine pre-fix source-path test. Full evidence/restart/live-repro pipeline remains outstanding. |
+| MQA-2P-006 | PARTIAL | Codex failures transition to persisted `WAITING_FOR_CODEX`; cursor, seed, tester thread and owned process metadata are persisted. SQLite pause/resume/stop flags are polled by the controller. Full controller-process reconstruction and teardown remain open. |
 
 ## Verification
 
 - `pytest -q tests/unit --tb=short`: **41 passed**.
 - `pytest -q tests/integration/test_fake_end_to_end.py --tb=short`: **1 passed**.
-- `mesa-qa doctor`: **FAIL (expected)**. `codex --version` and `codex login status` fail because the installed Codex package is missing its Linux binary dependency. No API-key fallback was enabled.
+- `codex --version`: **PASS** (`codex-cli 0.147.0`) after the standard CLI reinstall.
+- `codex login status`: **PASS** (`Logged in using ChatGPT`); no API-key fallback was enabled.
+- `mesa-qa doctor`: **FAIL (expected)** only because the MESA checkout is not clean, as required by the safety policy. Its unrelated untracked test file was not touched.
 - Real MCP smoke, Codex Tester, restart durability, and controlled repair E2E: **NOT RUN**. The Codex prerequisite is genuinely blocked; the remaining controller/control-plane hard gates are also incomplete.
 
 ## Remaining blockers / no-go items
 
-`WAITING_FOR_CODEX` persistence/resume, operator pause/resume/stop/teardown, candidate worktree revalidation and bounded-diff lifecycle, evidence-derived reporting, enforced resource stops, full taxonomy, live MCP finality, restart/live repro and controlled repair E2E still require implementation and verification. Therefore this branch is **not ready for long-run autonomous testing** and has not been pushed as a finished remediation.
+Safe teardown, candidate worktree revalidation and bounded-diff lifecycle, evidence-derived reporting, enforced resource stops, full taxonomy, live MCP finality, restart/live repro and controlled repair E2E still require implementation and verification. The now-clean-Codex live gates are blocked by the intentionally fail-closed dirty MESA baseline. Therefore this branch is **not ready for long-run autonomous testing** and has not been pushed as a finished remediation.
 
 ## Commits
 
@@ -40,3 +45,4 @@
 - `e7c5860` fix: make doctor fail closed on codex and port readiness
 - `2c5b624` fix: complete deterministic scenario and thread rotation lifecycle
 - `4311b2f` fix: require genuine pre-fix regression evidence
+- `f2e52e7` feat: persist waiting-for-codex and local controls
