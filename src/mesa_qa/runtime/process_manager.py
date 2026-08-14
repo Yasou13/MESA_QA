@@ -8,7 +8,7 @@ from mesa_qa.config import QAConfig
 from mesa_qa.runtime.worktree import WorktreeManager
 from mesa_qa.runtime.mesa_runtime import MesaCandidateRuntime
 from mesa_qa.runtime.mcp_gateway import MesaMCPGatewayProcess
-from mesa_qa.storage.paths import assert_safe_paths
+from mesa_qa.storage.paths import assert_safe_paths, discover_normal_mesa_storage
 
 logger = logging.getLogger("mesa_qa.process_manager")
 
@@ -36,6 +36,9 @@ class ProcessManager:
             main_repo=self.config.mesa.repo_path,
             candidate_worktree=self.candidate_worktree,
             qa_storage=qa_storage,
+            normal_mesa_storage=self.config.mesa.normal_storage_root
+            or discover_normal_mesa_storage(self.config.mesa.repo_path),
+            qa_root=self.run_dir.parent.parent,
         )
         return self.candidate_worktree
 

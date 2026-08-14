@@ -13,6 +13,7 @@ class MesaSettings(BaseModel):
     runtime_profile: str = "combined"
     port: int = 18000
     gateway_port: int = 18765
+    normal_storage_root: Optional[Path] = None
 
 
 class CandidateSettings(BaseModel):
@@ -25,8 +26,8 @@ class RunSettings(BaseModel):
     duration_hours: float = 8.0
     profile: str = "lite"
     seed: int = 42
-    cadence_seconds_min: float = 5.0
-    cadence_seconds_max: float = 15.0
+    cadence_seconds_min: float = 45.0
+    cadence_seconds_max: float = 120.0
     epoch_actions: int = 25
     restart_every_minutes: float = 90.0
     parallel_actions: int = 1
@@ -42,7 +43,7 @@ class CodexSettings(BaseModel):
 
 
 class RepairSettings(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     max_repairs_per_run: int = 10
     require_pre_fix_failure: bool = True
     commit_verified_repairs: bool = True
