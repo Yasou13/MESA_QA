@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import socket
+import subprocess
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +15,7 @@ from mesa_qa import __version__
 from mesa_qa.config import QAConfig
 from mesa_qa.controller import QAController
 from mesa_qa.runtime.worktree import WorktreeManager
-from mesa_qa.storage.paths import get_user_qa_root, get_run_dir, assert_safe_paths
+from mesa_qa.storage.paths import get_user_qa_root, get_run_dir, assert_safe_paths, discover_normal_mesa_storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("mesa_qa.cli")
@@ -26,6 +29,7 @@ def main() -> None:
     # doctor
     doctor_p = subparsers.add_parser("doctor", help="Check system dependencies, paths and safety preconditions")
     doctor_p.add_argument("--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA"))
+    doctor_p.add_argument("--config", type=Path, default=None)
 
     # init
     init_p = subparsers.add_parser("init", help="Initialize MESA-QA run directories and worktree")
@@ -81,6 +85,7 @@ def main() -> None:
 def _cmd_doctor(args: argparse.Namespace) -> None:
     print("=== MESA-QA Doctor ===")
     issues: list[str] = []
+    cfg = QAConfig.load(config_path=args.config) if args.config else QAConfig.load()
 
     repo = args.mesa_repo.resolve()
     if not repo.exists():
@@ -88,13 +93,45 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     elif not (repo / ".git").exists():
         issues.append(f"MESA path is not a Git repository: {repo}")
 
-    python_bin = repo / ".venv" / "bin" / "python"
+    python_bin = cfg.mesa.python_path if cfg.mesa.repo_path.resolve() == repo else repo / ".venv" / "bin" / "python"
     if not python_bin.exists():
         issues.append(f"MESA Python virtual environment missing: {python_bin}")
+    else:
+        probe = subprocess.run([str(python_bin), "-c", "import mesa_memory.runtime_entrypoint, mesa_mcp.gateway.app"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        if probe.returncode != 0:
+            issues.append(f"MESA runtime/gateway import failed: {probe.stderr.strip()[-300:]}")
+        mesa_cli = python_bin.parent / "mesa"
+        if not mesa_cli.is_file():
+            issues.append(f"MESA supported console lifecycle missing: {mesa_cli}")
 
-    codex_bin = os.popen("which codex || which npx").read().strip()
-    if not codex_bin:
+    codex_bin = cfg.codex.binary
+    if not shutil.which(codex_bin):
         issues.append("Codex CLI executable not found in PATH")
+    else:
+        for check in ([codex_bin, "--version"], [codex_bin, "login", "status"]):
+            res = subprocess.run(check, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, timeout=15)
+            if res.returncode != 0:
+                issues.append(f"Codex unusable: {' '.join(check[1:])} failed: {(res.stderr or res.stdout).strip()[-300:]}")
+
+    try:
+        hygiene = WorktreeManager(repo, cfg.candidate.worktree_root, cfg.candidate.branch_prefix).check_main_hygiene()
+        if cfg.safety.require_clean_main and hygiene["is_clean"] is not True:
+            issues.append("MESA main checkout is not clean (required by safety policy)")
+        if cfg.candidate.worktree_root.resolve() == repo:
+            issues.append("Candidate root cannot equal MESA main checkout")
+        normal_storage = cfg.mesa.normal_storage_root or discover_normal_mesa_storage(repo)
+        assert_safe_paths(repo, cfg.candidate.worktree_root / "doctor-candidate", get_user_qa_root() / "runs" / "doctor" / "mesa-storage", normal_storage, get_user_qa_root())
+    except (RuntimeError, ValueError) as exc:
+        issues.append(f"Storage/worktree safety check failed: {exc}")
+
+    for label, port in (("MESA", cfg.mesa.port), ("MCP gateway", cfg.mesa.gateway_port)):
+        probe_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe_socket.bind(("127.0.0.1", port))
+        except OSError:
+            issues.append(f"{label} port {port} is occupied")
+        finally:
+            probe_socket.close()
 
     if issues:
         print("DOCTOR STATUS: FAILED")
