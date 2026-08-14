@@ -151,7 +151,7 @@ class QAController:
                 self.scenario_engine.reset()
                 self._epoch += 1
 
-        event = self.scenario_engine.next_event()
+            event = self.scenario_engine.next_event()
             if not event:
                 await asyncio.sleep(5.0)
                 continue
@@ -245,6 +245,7 @@ class QAController:
             steps=[event.model_dump()],
             expected={"expected": verdict.expected},
             actual={"actual": verdict.actual},
+            repeat_count=2,
             candidate_commit_before=str(self.process_mgr.candidate_branch),
         )
 
@@ -270,8 +271,15 @@ class QAController:
         self.state_machine.transition_to(State.REPAIRING)
         logger.info("Starting autonomous repair pipeline for bug %s...", bug.bug_id)
 
-        # Create Pre-fix regression test file
-        test_file = self.repair_verifier.create_regression_test(self.process_mgr.candidate_worktree, bug)
+        # A QA observation is not a source-path regression.  Only an explicit
+        # evidence-backed command recorded by the reproduction pipeline may
+        # authorize repair.  Never synthesize `expected == actual` tests.
+        test_file = bug.preconditions.get("pre_fix_test_file")
+        if not isinstance(test_file, str) or not test_file:
+            logger.warning("No genuine pre-fix source-path regression was recorded for %s; repair blocked.", bug.bug_id)
+            self._repairs.append({"bug_id": bug.bug_id, "status": "NEEDS_REVIEW", "reason": "missing genuine pre-fix regression"})
+            self.state_machine.transition_to(State.RUNNING)
+            return
 
         # Verify PRE-FIX FAIL
         pre_fix_pass, output = self.repair_verifier.run_pytest_on_file(self.process_mgr.candidate_worktree, test_file)
@@ -286,7 +294,7 @@ class QAController:
         gate_ok, gate_reason = self.repair_gate.evaluate_gates(
             bug=bug,
             candidate_worktree=self.process_mgr.candidate_worktree,
-            stable_reproduction_proven=True,
+            stable_reproduction_proven=bug.repeat_count >= 2,
             pre_fix_test_exists=True,
         )
 
@@ -307,7 +315,10 @@ class QAController:
         post_fix_pass, _ = self.repair_verifier.run_pytest_on_file(self.process_mgr.candidate_worktree, test_file)
 
         if post_fix_pass:
-            sha = self.repair_verifier.commit_repair(self.process_mgr.candidate_worktree, bug.bug_id, bug.category)
+            sha = self.repair_verifier.commit_repair(
+                self.process_mgr.candidate_worktree, bug.bug_id, bug.category,
+                self.policy_guard.changed_paths(self.process_mgr.candidate_worktree),
+            )
             repair_res.success = True
             repair_res.post_fix_test_passed = True
             repair_res.commit_sha = sha

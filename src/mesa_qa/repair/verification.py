@@ -25,26 +25,15 @@ class RepairVerifier:
         return passed, output
 
     def create_regression_test(self, candidate_worktree: Path, bug: BugReport) -> str:
-        tests_dir = candidate_worktree / "tests" / "qa_regression"
-        tests_dir.mkdir(parents=True, exist_ok=True)
-        test_file = tests_dir / f"test_bug_{bug.bug_id.lower().replace('-', '_')}.py"
+        raise RuntimeError(
+            "MESA-QA must not synthesize a captured-data regression test; "
+            "the reproduction pipeline must supply a real source-path test"
+        )
 
-        test_code = f"""# Autonomous QA Regression Test for {bug.bug_id}
-import pytest
-
-def test_regression_{bug.bug_id.lower().replace('-', '_')}():
-    # Asserting expected behavior for {bug.category}
-    expected = {repr(bug.expected)}
-    actual = {repr(bug.actual)}
-    assert expected == actual, f"Regression failure for {bug.bug_id}: expected {{expected}}, got {{actual}}"
-"""
-        test_file.write_text(test_code, encoding="utf-8")
-        rel_path = str(test_file.relative_to(candidate_worktree))
-        logger.info("Created regression test file at %s", rel_path)
-        return rel_path
-
-    def commit_repair(self, candidate_worktree: Path, bug_id: str, summary: str) -> str:
-        cmd_add = ["git", "add", "."]
+    def commit_repair(self, candidate_worktree: Path, bug_id: str, summary: str, approved_paths: List[str]) -> str:
+        if not approved_paths:
+            raise RuntimeError("Refusing repair commit with no approved changed paths")
+        cmd_add = ["git", "add", "--", *approved_paths]
         subprocess.run(cmd_add, cwd=candidate_worktree, check=True)
 
         msg = f"qa: fix {bug_id} - {summary}"

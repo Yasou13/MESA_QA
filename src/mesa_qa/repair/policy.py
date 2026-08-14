@@ -42,3 +42,9 @@ class RepairPolicyGuard:
             logger.info("Git diff stat: %s", stat_line)
 
         return True, "Diff complies with repair safety policy"
+
+    def changed_paths(self, candidate_worktree: Path) -> List[str]:
+        res = subprocess.run(["git", "diff", "--name-only"], cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        if res.returncode != 0:
+            raise RuntimeError(f"Unable to list repair paths: {res.stderr}")
+        return [path for path in res.stdout.splitlines() if path]
