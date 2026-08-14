@@ -1,47 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 from mesa_qa.models import ScenarioEvent, TesterObservation, Verdict
 
 
 class DeterministicJudge:
-    def judge(self, event: ScenarioEvent, observation: TesterObservation, oracle_evaluator: Any) -> Verdict:
-        # High-priority check for infrastructure errors
+    async def judge(self, event: ScenarioEvent, observation: TesterObservation, oracle_evaluator: Any) -> Verdict:
+        if oracle_evaluator is not None:
+            return await oracle_evaluator.evaluate_observation(event, observation)
         if observation.tester_assessment == "infra_error":
-            return Verdict(
-                is_pass=False,
-                is_candidate_anomaly=False,
-                category="INFRASTRUCTURE",
-                reason=observation.reason or "MCP/HTTP Infrastructure Error",
-            )
-
-        # Non-recall write events pass by default unless reported as error
+            return Verdict(is_pass=False, is_candidate_anomaly=False, category="INFRASTRUCTURE", reason=observation.reason or "MCP/HTTP infrastructure error")
         if event.kind.value != "recall":
-            return Verdict(is_pass=True, is_candidate_anomaly=False)
-
-        # Recall evaluation against expected truth
-        actual_text = observation.actual.get("answer") or str(observation.actual.get("raw_response", ""))
-        expected = event.expected
-
-        if expected is not None:
-            exp_str = str(expected).strip().lower()
-            act_str = actual_text.strip().lower()
-
-            if exp_str in act_str:
-                return Verdict(
-                    is_pass=True,
-                    is_candidate_anomaly=False,
-                    expected=expected,
-                    actual=actual_text,
-                )
-            else:
-                return Verdict(
-                    is_pass=False,
-                    is_candidate_anomaly=True,
-                    category="RETRIEVAL_MISMATCH",
-                    reason=f"Expected substring '{expected}' not found in actual response: '{actual_text}'",
-                    expected=expected,
-                    actual=actual_text,
-                )
-
-        return Verdict(is_pass=True, is_candidate_anomaly=False)
+            state = str(observation.actual.get("operation_state", "")).upper()
+            if observation.actual.get("operation_id") and state in {"COMPLETED", "SUCCEEDED", "SUCCESS"}:
+                return Verdict(is_pass=True, is_candidate_anomaly=False)
+            return Verdict(is_pass=False, is_candidate_anomaly=False, category="OPERATION_FINALITY", reason="Write operation is not terminal")
+        actual = str(observation.actual.get("answer") or observation.actual.get("raw_response", ""))
+        if event.expected is not None and str(event.expected).lower() in actual.lower():
+            return Verdict(is_pass=True, is_candidate_anomaly=False, expected=event.expected, actual=actual)
+        return Verdict(is_pass=False, is_candidate_anomaly=True, category="RETRIEVAL_MISMATCH", reason="Expected truth was not found", expected=event.expected, actual=actual)

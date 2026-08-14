@@ -52,6 +52,7 @@ class TesterCodex:
             "text": event.text,
             "question": event.question,
             "mode": event.mode,
+            "idempotency_key": event.idempotency_key,
         })
 
         prompt = system_contract + "\n\n" + template

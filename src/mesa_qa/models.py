@@ -13,6 +13,11 @@ class ActionKind(str, Enum):
     FORGET = "forget"
     ROTATE_SESSION = "rotate_session"
     RESTART_RUNTIME = "restart_runtime"
+    DUPLICATE = "duplicate"
+    SEMANTIC_DUPLICATE = "semantic_duplicate"
+    MULTI_FACT = "multi_fact"
+    CONFLICT = "conflict"
+    IDEMPOTENCY = "idempotency"
 
 
 class ScenarioEvent(BaseModel):
@@ -26,6 +31,7 @@ class ScenarioEvent(BaseModel):
     question: Optional[str] = None
     mode: str = "current"  # current, historical, forgotten
     expected: Optional[Any] = None
+    idempotency_key: Optional[str] = None
     effective_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

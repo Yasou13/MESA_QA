@@ -23,9 +23,14 @@ class OracleDB:
     async def apply_event(self, event: ScenarioEvent) -> None:
         now = datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(self.db_path) as db:
+            # Event IDs are durable applied markers. A crash/replay must not
+            # duplicate the corresponding fact side effects.
+            async with db.execute("SELECT 1 FROM events WHERE event_id = ?", (event.id,)) as cursor:
+                if await cursor.fetchone():
+                    return
             # 1. Log event
             await db.execute(
-                "INSERT OR REPLACE INTO events (event_id, kind, payload_json, applied_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO events (event_id, kind, payload_json, applied_at) VALUES (?, ?, ?, ?)",
                 (event.id, event.kind.value, json.dumps(event.model_dump()), now),
             )
 

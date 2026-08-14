@@ -186,7 +186,7 @@ class QAController:
         obs = await self.tester.execute_action(event, action_id, tester_ws, mcp_env=env)
 
         # 3. Judge output against Oracle
-        verdict = self.judge.judge(event, obs, self.oracle_eval)
+        verdict = await self.judge.judge(event, obs, self.oracle_eval)
 
         # 4. Record action log
         await self.controller_db.record_action(
@@ -214,7 +214,7 @@ class QAController:
         # Step 2: Reproduce
         self.state_machine.transition_to(State.REPRODUCING)
         recheck_obs = await self.tester.execute_action(event, f"recheck_{obs.action_id}", self.run_dir / "tester_workspace")
-        recheck_verdict = self.judge.judge(event, recheck_obs, self.oracle_eval)
+        recheck_verdict = await self.judge.judge(event, recheck_obs, self.oracle_eval)
 
         if not recheck_verdict.is_candidate_anomaly:
             logger.info("Anomaly did not reproduce on recheck. Dismissing transient anomaly.")
@@ -310,7 +310,7 @@ class QAController:
 
             self.state_machine.transition_to(State.LIVE_RECHECK)
             live_obs = await self.tester.execute_action(event, f"live_{bug.bug_id}", self.run_dir / "tester_workspace")
-            live_verdict = self.judge.judge(event, live_obs, self.oracle_eval)
+            live_verdict = await self.judge.judge(event, live_obs, self.oracle_eval)
 
             if live_verdict.is_pass:
                 logger.info("LIVE REPRO PASSED! Bug %s resolved and verified on candidate runtime.", bug.bug_id)
