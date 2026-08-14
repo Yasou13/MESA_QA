@@ -30,12 +30,13 @@ Latest read-only observation: MESA is now at `ada67dc5c623cbfe206b93a1dda5cf9d9f
 - `pytest -q tests/integration/test_fake_end_to_end.py --tb=short`: **1 passed**.
 - `codex --version`: **PASS** (`codex-cli 0.147.0`) after the standard CLI reinstall.
 - `codex login status`: **PASS** (`Logged in using ChatGPT`); no API-key fallback was enabled.
-- `mesa-qa doctor`: **FAIL (expected)** only because the MESA checkout is not clean, as required by the safety policy. Its unrelated untracked test file was not touched.
+- `mesa-qa doctor`: **PASS** after replacing the clean-checkout rejection with read-only integrity snapshots.
+- `pytest -q tests/integration/test_mesa_candidate_live.py --tb=short`: **PASS** twice (10.89s / 9.86s); candidate runtime reached `healthy`, then run-owned processes/worktree were removed. Original MESA remained `cf33c25` and clean.
 - Real MCP smoke, Codex Tester, restart durability, and controlled repair E2E: **NOT RUN**. The Codex prerequisite is genuinely blocked; the remaining controller/control-plane hard gates are also incomplete.
 
 ## Remaining blockers / no-go items
 
-Safe teardown, candidate worktree revalidation and bounded-diff lifecycle, evidence-derived reporting, enforced resource stops, full taxonomy, live MCP finality, restart/live repro and controlled repair E2E still require implementation and verification. The now-clean-Codex live gates are blocked by the intentionally fail-closed dirty MESA baseline. Therefore this branch is **not ready for long-run autonomous testing** and has not been pushed as a finished remediation.
+Safe teardown, candidate worktree revalidation and bounded-diff lifecycle, evidence-derived reporting, enforced resource stops, full taxonomy, live MCP finality, restart/live repro and controlled repair E2E still require implementation and verification. Therefore this branch is **not ready for long-run autonomous testing** and has not been pushed as a finished remediation.
 
 ## Commits
 
@@ -46,3 +47,5 @@ Safe teardown, candidate worktree revalidation and bounded-diff lifecycle, evide
 - `2c5b624` fix: complete deterministic scenario and thread rotation lifecycle
 - `4311b2f` fix: require genuine pre-fix regression evidence
 - `f2e52e7` feat: persist waiting-for-codex and local controls
+- `24b3cb9` fix: allow dirty read-only mesa baseline with integrity snapshots
+- `262b3b2` test: require healthy live candidate runtime
