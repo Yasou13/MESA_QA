@@ -45,7 +45,7 @@ class QAController:
         self.oracle_eval = OracleEvaluator(self.oracle_db)
 
         self.process_mgr = ProcessManager(config=config, run_dir=self.run_dir)
-        self.scenario_engine = ScenarioEngine(scenarios_dir=Path(__file__).parent.parent.parent / "scenarios")
+        self.scenario_engine = ScenarioEngine(scenarios_dir=Path(__file__).parent.parent.parent / "scenarios", seed=config.run.seed)
 
         self.codex_runner = CodexRunner(codex_binary=config.codex.binary)
         self.tester = TesterCodex(runner=self.codex_runner, prompts_dir=Path(__file__).parent.parent.parent / "prompts")
@@ -148,10 +148,10 @@ class QAController:
 
             if not self.scenario_engine.has_next():
                 logger.info("End of scenario queue reached. Resetting cursor for continuous endurance...")
-                self.scenario_engine.reset_cursor()
+                self.scenario_engine.reset()
                 self._epoch += 1
 
-            event = self.scenario_engine.next_event()
+        event = self.scenario_engine.next_event()
             if not event:
                 await asyncio.sleep(5.0)
                 continue
@@ -170,6 +170,7 @@ class QAController:
     async def _process_event(self, event: ScenarioEvent) -> None:
         self._action_count += 1
         action_id = f"act_{self.run_id}_{self._action_count:06d}"
+        event = event.model_copy(update={"idempotency_key": event.idempotency_key or f"qa:{self.run_id}:{action_id}:1"})
 
         # 1. Apply event to Ground Truth Oracle
         await self.oracle_db.apply_event(event)
@@ -178,6 +179,15 @@ class QAController:
         if event.kind.value == "restart_runtime":
             logger.info("Scenario requested runtime restart. Restarting candidate services...")
             await self.process_mgr.restart_all()
+            return
+        if event.kind.value == "rotate_session":
+            self.tester.rotate_thread()
+            await self.controller_db.record_action(
+                action_id=action_id, run_id=self.run_id, scenario_event_id=event.id,
+                action_type=event.kind.value, request=event.model_dump(),
+                response={"thread_rotated": True}, verdict="PASS",
+                executed_at=datetime.now(timezone.utc).isoformat(),
+            )
             return
 
         # 2. Execute action via Tester Codex

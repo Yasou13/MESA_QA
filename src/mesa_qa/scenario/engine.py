@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Optional
+import random
 import yaml
 import logging
 
@@ -11,8 +12,9 @@ logger = logging.getLogger("mesa_qa.scenario_engine")
 
 
 class ScenarioEngine:
-    def __init__(self, scenarios_dir: Path):
+    def __init__(self, scenarios_dir: Path, seed: int = 42):
         self.scenarios_dir = scenarios_dir.resolve()
+        self.seed = seed
         self.events: List[ScenarioEvent] = []
         self._cursor: int = 0
 
@@ -30,6 +32,7 @@ class ScenarioEngine:
         else:
             target_files = sorted(list(self.scenarios_dir.glob("*.yaml")))
 
+        generator = random.Random(self.seed)
         for fp in target_files:
             try:
                 with open(fp, "r", encoding="utf-8") as f:
@@ -47,6 +50,9 @@ class ScenarioEngine:
                             question=ev_dict.get("question"),
                             mode=ev_dict.get("mode", "current"),
                             expected=ev_dict.get("expected"),
+                            # A seed controls generated scenario identity while preserving
+                            # the declared causal ordering of YAML events.
+                            effective_at=ev_dict.get("effective_at", f"qa-seed-{self.seed}-{generator.randrange(1_000_000_000):09d}"),
                         )
                         self.events.append(event)
             except Exception as exc:
@@ -68,3 +74,6 @@ class ScenarioEngine:
     def reset(self) -> None:
         self._cursor = 0
 
+    @property
+    def cursor(self) -> int:
+        return self._cursor

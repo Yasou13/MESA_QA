@@ -31,6 +31,10 @@ class TesterCodex:
         """Require MESA's protected `mesa codex run` launcher for tester turns."""
         self._launcher_prefix = list(launcher_prefix)
 
+    def rotate_thread(self) -> None:
+        """Drop Codex conversation context; MESA data remains available through MCP."""
+        self.thread_id = None
+
     async def execute_action(
         self,
         event: ScenarioEvent,

@@ -48,3 +48,10 @@ async def test_tester_codex_failure_is_not_replaced_by_direct_mcp(tmp_path):
 
     assert observation.tester_assessment == "infra_error"
     assert "Codex failed" in observation.reason
+
+
+def test_thread_rotation_forgets_codex_conversation_id(tmp_path):
+    tester = TesterCodex(runner=FakeRunner(CodexRunResult(returncode=0)), prompts_dir=Path(__file__).parents[2] / "prompts")
+    tester.thread_id = "old-thread"
+    tester.rotate_thread()
+    assert tester.thread_id is None
