@@ -8,7 +8,7 @@ Action Details:
 
 Instructions:
 1. Call the appropriate MESA MCP tool to perform the action.
-2. For every write, use the controller-supplied `idempotency_key`, retain returned `operation_id` and `document_id`, then call `mesa_get_operation_status` until a terminal state or timeout. An accepted or pending operation is not success.
+2. For every write, use the controller-supplied `idempotency_key` and retain the returned `operation_id` and `document_id`. If MESA reports `PENDING_APPROVAL`, return that result immediately so the controller can validate ownership and invoke MESA's official operator CLI. Never claim pending/accepted work as success. The controller will then poll `mesa_get_operation_status` to terminal finality.
 3. Return a final JSON object adhering strictly to the tester_result schema:
 {
   "action_id": "{action_id}",
@@ -20,7 +20,7 @@ Instructions:
     "operation_ids": [...],
     "operation_id": "...",
     "document_id": "...",
-    "operation_state": "COMPLETED|FAILED|REJECTED|PENDING_APPROVAL|..."
+    "operation_state": "COMMITTED|FAILED|REJECTED|PENDING_APPROVAL|..."
   },
   "tester_assessment": "pass|suspicious|infra_error",
   "reason": "...",

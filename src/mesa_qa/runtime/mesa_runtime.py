@@ -5,7 +5,7 @@ import os
 import signal
 import subprocess
 from pathlib import Path
-import sys
+from typing import Optional
 import logging
 
 from mesa_qa.runtime.health import check_mesa_health
@@ -22,6 +22,10 @@ class MesaCandidateRuntime:
         port: int = 18000,
         api_key: str = "qa-secret-key-12345",
         principal_id: str = "qa-service-principal",
+        runtime_profile: str = "combined",
+        model_enabled: bool = True,
+        external_provider_enabled: bool = True,
+        llm_provider: str = "mock",
         log_file: Optional[Path] = None,
     ):
         self.candidate_worktree = candidate_worktree.resolve()
@@ -30,6 +34,10 @@ class MesaCandidateRuntime:
         self.port = port
         self.api_key = api_key
         self.principal_id = principal_id
+        self.runtime_profile = runtime_profile
+        self.model_enabled = model_enabled
+        self.external_provider_enabled = external_provider_enabled
+        self.llm_provider = llm_provider
         self.log_file = log_file
         self._process: Optional[asyncio.subprocess.Process] = None
 
@@ -39,7 +47,9 @@ class MesaCandidateRuntime:
 
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
-            logger.info("MESA Candidate Runtime is already running (PID %d)", self._process.pid)
+            logger.info(
+                "MESA Candidate Runtime is already running (PID %d)", self._process.pid
+            )
             return
 
         env = {
@@ -47,8 +57,19 @@ class MesaCandidateRuntime:
             "VIRTUAL_ENV": str(self.python_bin.parent.parent),
             "HOME": os.environ.get("HOME", str(Path.home())),
             "USER": os.environ.get("USER", "yasin"),
-            "MESA_RUNTIME_PROFILE": "combined",
+            "MESA_RUNTIME_PROFILE": self.runtime_profile,
             "MESA_STORAGE_ROOT": str(self.storage_root),
+            "MESA_LOAD_DOTENV": "false",
+            "MESA_MODEL_ENABLED": "true" if self.model_enabled else "false",
+            "MESA_EXTERNAL_PROVIDER_ENABLED": (
+                "true" if self.external_provider_enabled else "false"
+            ),
+            "MESA_LLM_PROVIDER": self.llm_provider,
+            "MESA_TIER3_LLM_PROVIDER_A": self.llm_provider,
+            "MESA_TIER3_LLM_MODEL_A": "mesa-qa-validator-a",
+            "MESA_TIER3_LLM_PROVIDER_B": self.llm_provider,
+            "MESA_TIER3_LLM_MODEL_B": "mesa-qa-validator-b",
+            "MESA_EMBEDDING_DIMENSION": "384",
             "MESA_PORT": str(self.port),
             "MESA_API_KEY": self.api_key,
             "MESA_PRINCIPAL_ID": self.principal_id,
@@ -59,7 +80,11 @@ class MesaCandidateRuntime:
         log_out = open(self.log_file, "a") if self.log_file else subprocess.DEVNULL
 
         cmd = [str(self.python_bin), "-m", "mesa_memory.runtime_entrypoint"]
-        logger.info("Launching MESA candidate runtime: %s (cwd: %s)", " ".join(cmd), self.candidate_worktree)
+        logger.info(
+            "Launching MESA candidate runtime: %s (cwd: %s)",
+            " ".join(cmd),
+            self.candidate_worktree,
+        )
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -74,9 +99,14 @@ class MesaCandidateRuntime:
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout_seconds:
             if self._process and self._process.returncode is not None:
-                logger.error("MESA process exited prematurely with code %d", self._process.returncode)
+                logger.error(
+                    "MESA process exited prematurely with code %d",
+                    self._process.returncode,
+                )
                 return False
-            health = await check_mesa_health(self.base_url, api_key=self.api_key, timeout=2.0)
+            health = await check_mesa_health(
+                self.base_url, api_key=self.api_key, timeout=2.0
+            )
             if health["status"] == "healthy":
                 logger.info("MESA candidate runtime is READY at %s", self.base_url)
                 return True
@@ -93,7 +123,9 @@ class MesaCandidateRuntime:
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=10.0)
             except asyncio.TimeoutError:
-                logger.warning("MESA process did not terminate gracefully; force killing...")
+                logger.warning(
+                    "MESA process did not terminate gracefully; force killing..."
+                )
                 self._process.kill()
                 await self._process.wait()
         except ProcessLookupError:

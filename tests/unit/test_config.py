@@ -1,5 +1,5 @@
-import pytest
 from mesa_qa.config import QAConfig
+
 
 def test_default_config_loading():
     cfg = QAConfig.load()
@@ -8,6 +8,11 @@ def test_default_config_loading():
     assert cfg.safety.max_auto_changed_files == 8
     assert ".github/" in cfg.safety.forbidden_repair_paths
     assert cfg.repair.enabled is False
+    assert cfg.approval.enabled is True
+    assert cfg.approval.timeout_seconds == 90.0
+    assert cfg.mesa.model_enabled is True
+    assert cfg.mesa.llm_provider == "mock"
+
 
 def test_lite_profile_loading():
     cfg = QAConfig.load(profile="lite")

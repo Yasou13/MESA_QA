@@ -15,6 +15,23 @@ class EvidenceStore:
         self.evidence_dir = (run_dir / "evidence").resolve()
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    def append_json_record(self, filename: str, record: Dict[str, Any]) -> Path:
+        """Append lightweight run evidence without introducing another store."""
+        if Path(filename).name != filename or not filename.endswith(".json"):
+            raise ValueError("evidence filename must be one local .json name")
+        path = self.evidence_dir / filename
+        records: List[Dict[str, Any]] = []
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, list):
+                raise ValueError(f"existing evidence is not a JSON array: {path}")
+            records = loaded
+        records.append(record)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+        return path
+
     def create_bundle(
         self,
         bug: BugReport,

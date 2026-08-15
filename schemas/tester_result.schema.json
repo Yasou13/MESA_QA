@@ -23,6 +23,9 @@
         "answer": { "type": ["string", "null"] },
         "memory_ids": { "type": "array", "items": { "type": "string" } },
         "operation_ids": { "type": "array", "items": { "type": "string" } },
+        "operation_id": { "type": ["string", "null"] },
+        "document_id": { "type": ["string", "null"] },
+        "operation_state": { "type": ["string", "null"] },
         "raw_response": { "type": ["object", "array", "string", "number", "boolean", "null"] }
       }
     },

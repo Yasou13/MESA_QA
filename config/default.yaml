@@ -5,6 +5,9 @@ mesa:
   port: 18000
   gateway_port: 18765
   normal_storage_root: null
+  model_enabled: true
+  external_provider_enabled: true
+  llm_provider: mock
 
 candidate:
   worktree_root: /home/yasin/Desktop/MESA-QA-candidate
@@ -27,6 +30,12 @@ codex:
   tester_timeout_seconds: 300
   repair_timeout_seconds: 1200
   json_events: true
+
+approval:
+  enabled: true
+  operator_principal: mesa-qa-operator
+  timeout_seconds: 90
+  poll_interval_seconds: 2
 
 repair:
   enabled: false

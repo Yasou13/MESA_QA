@@ -27,9 +27,13 @@ class ProcessManager:
         self.mesa_runtime: Optional[MesaCandidateRuntime] = None
         self.mcp_gateway: Optional[MesaMCPGatewayProcess] = None
 
-    def setup_worktree(self, run_id: str, baseline_commit: Optional[str] = None) -> Path:
-        self.candidate_worktree, self.candidate_branch = self.worktree_mgr.create_candidate_worktree(
-            run_id=run_id, baseline_commit=baseline_commit
+    def setup_worktree(
+        self, run_id: str, baseline_commit: Optional[str] = None
+    ) -> Path:
+        self.candidate_worktree, self.candidate_branch = (
+            self.worktree_mgr.create_candidate_worktree(
+                run_id=run_id, baseline_commit=baseline_commit
+            )
         )
         qa_storage = self.run_dir / "mesa-storage"
         assert_safe_paths(
@@ -56,6 +60,10 @@ class ProcessManager:
             python_bin=self.config.mesa.python_path,
             storage_root=qa_storage,
             port=self.config.mesa.port,
+            runtime_profile=self.config.mesa.runtime_profile,
+            model_enabled=self.config.mesa.model_enabled,
+            external_provider_enabled=self.config.mesa.external_provider_enabled,
+            llm_provider=self.config.mesa.llm_provider,
             log_file=logs_dir / "mesa.log",
         )
         await self.mesa_runtime.start()
@@ -90,5 +98,7 @@ class ProcessManager:
     def teardown(self, delete_worktree: bool = True) -> None:
         if delete_worktree and self.candidate_worktree:
             self.worktree_mgr.remove_candidate_worktree(
-                self.candidate_worktree, delete_branch=False, branch_name=self.candidate_branch
+                self.candidate_worktree,
+                delete_branch=False,
+                branch_name=self.candidate_branch,
             )

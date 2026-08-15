@@ -10,7 +10,13 @@ logger = logging.getLogger("mesa_qa.bootstrap")
 
 
 class MESABootstrap:
-    def __init__(self, candidate_worktree: Path, python_bin: Path, control_db_path: Path, gateway_url: str):
+    def __init__(
+        self,
+        candidate_worktree: Path,
+        python_bin: Path,
+        control_db_path: Path,
+        gateway_url: str,
+    ):
         self.binding_mgr = MCPBindingManager(
             candidate_worktree=candidate_worktree,
             python_bin=python_bin,
@@ -25,6 +31,9 @@ class MESABootstrap:
         status_res = self.binding_mgr.run_status(tester_workspace=tester_dir)
         return {
             "binding": binding_res,
+            "binding_context": self.binding_mgr.binding_context(
+                tester_dir, binding_res
+            ),
             "doctor": doctor_res,
             "status": status_res,
             "launcher_prefix": self.binding_mgr.launcher_prefix(tester_dir),

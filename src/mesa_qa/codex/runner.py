@@ -26,12 +26,40 @@ class CodexRunner:
         thread_id: Optional[str] = None,
         timeout_seconds: int = 300,
         launcher_prefix: Optional[List[str]] = None,
+        mcp_gateway_url: Optional[str] = None,
         max_output_bytes: int = 1_000_000,
     ) -> CodexRunResult:
         cwd = cwd.resolve()
 
         # Build command: npx -y @openai/codex or codex binary
         cmd = list(launcher_prefix or []) + [self.codex_binary, "exec", "--json"]
+        # The Tester workspace is a QA-owned contained directory rather than a
+        # source checkout. Codex otherwise refuses to run before MCP is reached.
+        cmd.append("--skip-git-repo-check")
+        if mcp_gateway_url:
+            server_url = mcp_gateway_url.rstrip("/") + "/mcp"
+            cmd.extend(
+                [
+                    "-c",
+                    f'mcp_servers.mesa.url="{server_url}"',
+                    "-c",
+                    'mcp_servers.mesa.bearer_token_env_var="MESA_CODEX_MCP_TOKEN"',
+                    "-c",
+                    "mcp_servers.mesa.enabled=true",
+                    "-c",
+                    "mcp_servers.mesa.required=true",
+                    "-c",
+                    # Codex may invoke the remote tool noninteractively; MESA's
+                    # own durable operator state machine remains authoritative.
+                    'mcp_servers.mesa.default_tools_approval_mode="approve"',
+                    "-c",
+                    (
+                        'mcp_servers.mesa.enabled_tools=["mesa_health","mesa_recall",'
+                        '"mesa_remember","mesa_improve","mesa_forget",'
+                        '"mesa_get_operation_status"]'
+                    ),
+                ]
+            )
 
         if sandbox == "read-only":
             cmd.extend(["--sandbox", "read-only"])
@@ -60,12 +88,15 @@ class CodexRunner:
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    self._capture_output(process, max_output_bytes), timeout=float(timeout_seconds)
+                    self._capture_output(process, max_output_bytes),
+                    timeout=float(timeout_seconds),
                 )
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
-                logger.error("Codex execution timed out after %d seconds", timeout_seconds)
+                logger.error(
+                    "Codex execution timed out after %d seconds", timeout_seconds
+                )
                 return CodexRunResult(
                     returncode=124,
                     raw_stderr="Codex execution timed out",
@@ -80,7 +111,16 @@ class CodexRunner:
                 if ev.thread_id:
                     thread = ev.thread_id
 
-            output_text = "\n".join([ev.delta or "" for ev in events if ev.delta]).strip()
+            output_parts: List[str] = []
+            for event in events:
+                if event.delta:
+                    output_parts.append(event.delta)
+                item = event.item or {}
+                if item.get("type") == "agent_message" and isinstance(
+                    item.get("text"), str
+                ):
+                    output_parts.append(item["text"])
+            output_text = "\n".join(output_parts).strip()
 
             return CodexRunResult(
                 returncode=process.returncode or 0,

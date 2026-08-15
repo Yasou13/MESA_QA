@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, List, Optional
 import yaml
@@ -14,6 +13,9 @@ class MesaSettings(BaseModel):
     port: int = 18000
     gateway_port: int = 18765
     normal_storage_root: Optional[Path] = None
+    model_enabled: bool = True
+    external_provider_enabled: bool = True
+    llm_provider: str = "mock"
 
 
 class CandidateSettings(BaseModel):
@@ -40,6 +42,13 @@ class CodexSettings(BaseModel):
     tester_timeout_seconds: int = 300
     repair_timeout_seconds: int = 1200
     json_events: bool = True
+
+
+class ApprovalSettings(BaseModel):
+    enabled: bool = True
+    operator_principal: str = "mesa-qa-operator"
+    timeout_seconds: float = 90.0
+    poll_interval_seconds: float = 2.0
 
 
 class RepairSettings(BaseModel):
@@ -79,15 +88,18 @@ class QAConfig(BaseModel):
     candidate: CandidateSettings = Field(default_factory=CandidateSettings)
     run: RunSettings = Field(default_factory=RunSettings)
     codex: CodexSettings = Field(default_factory=CodexSettings)
+    approval: ApprovalSettings = Field(default_factory=ApprovalSettings)
     repair: RepairSettings = Field(default_factory=RepairSettings)
     verification: VerificationSettings = Field(default_factory=VerificationSettings)
     resources: ResourcesSettings = Field(default_factory=ResourcesSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
 
     @classmethod
-    def load(cls, config_path: Optional[Path] = None, profile: Optional[str] = None) -> QAConfig:
+    def load(
+        cls, config_path: Optional[Path] = None, profile: Optional[str] = None
+    ) -> QAConfig:
         config_data: dict[str, Any] = {}
-        
+
         # 1. Load default.yaml if exists
         default_yaml = Path(__file__).parent.parent.parent / "config" / "default.yaml"
         if default_yaml.exists():
@@ -96,7 +108,9 @@ class QAConfig(BaseModel):
 
         # 2. Load profile yaml (lite/standard) if specified
         if profile:
-            profile_yaml = Path(__file__).parent.parent.parent / "config" / f"{profile}.yaml"
+            profile_yaml = (
+                Path(__file__).parent.parent.parent / "config" / f"{profile}.yaml"
+            )
             if profile_yaml.exists():
                 with open(profile_yaml, "r", encoding="utf-8") as f:
                     pdata = yaml.safe_load(f) or {}
