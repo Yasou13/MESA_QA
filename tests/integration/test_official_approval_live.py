@@ -47,7 +47,18 @@ async def test_real_tester_official_approval_rotation_and_restart() -> None:
             text=True,
             check=True,
         ).stdout.strip()
-        assert candidate_head == "7362d345d814f50871b13a7896ed03aef0e7bc14"
+        expected_candidate_sha = (
+            controller.process_mgr.worktree_mgr.resolve_ref(config.mesa.candidate_ref)
+            if config.mesa.candidate_ref
+            else subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=config.mesa.repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )
+        assert candidate_head == expected_candidate_sha
 
         events = [
             event(

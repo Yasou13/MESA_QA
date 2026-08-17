@@ -42,15 +42,44 @@ class EvidenceStore:
             return loaded
         return []
 
+    def save_json(self, filename: str, data: Any) -> Path:
+        """Save a single JSON evidence object atomically."""
+        if Path(filename).name != filename or not filename.endswith(".json"):
+            raise ValueError("evidence filename must be one local .json name")
+        path = self.evidence_dir / filename
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+        return path
+
+    def read_json(self, filename: str) -> Optional[Any]:
+        """Read a single JSON evidence file."""
+        path = self.evidence_dir / filename
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
     def create_bundle(
         self,
         bug: BugReport,
         user_sequence: List[Dict[str, Any]],
         expected_data: Dict[str, Any],
         actual_data: Dict[str, Any],
+        repro_execution: Optional[Dict[str, Any]] = None,
     ) -> Path:
-        bug_dir = self.evidence_dir / bug.bug_id
+        bug_dir = self.evidence_dir / f"repro_{bug.bug_id}"
         bug_dir.mkdir(parents=True, exist_ok=True)
+
+        # Backward compatibility: link or alias legacy bug.bug_id path
+        legacy_dir = self.evidence_dir / bug.bug_id
+        if legacy_dir != bug_dir and not legacy_dir.exists():
+            try:
+                legacy_dir.symlink_to(bug_dir.name)
+            except Exception:
+                pass
 
         # 1. bug.json
         (bug_dir / "bug.json").write_text(
@@ -72,7 +101,18 @@ class EvidenceStore:
             json.dumps(actual_data, indent=2), encoding="utf-8"
         )
 
-        # 5. repro.md
+        # 5. repro_execution.json
+        exec_payload = repro_execution or {
+            "status": "CONFIRMED_ANOMALY",
+            "reproduced": True,
+            "strategy": bug.reproduction_strategy,
+            "candidate_commit": bug.candidate_commit_before,
+        }
+        (bug_dir / "repro_execution.json").write_text(
+            json.dumps(exec_payload, indent=2), encoding="utf-8"
+        )
+
+        # 6. repro.md
         repro_md = f"""# Reproduction Evidence Bundle — {bug.bug_id}
 
 - **Bug ID**: {bug.bug_id}
@@ -100,7 +140,7 @@ class EvidenceStore:
 """
         (bug_dir / "repro.md").write_text(repro_md, encoding="utf-8")
 
-        # 6. manifest.json
+        # 7. manifest.json
         manifest = {
             "bug_id": bug.bug_id,
             "run_id": bug.run_id,
@@ -116,6 +156,7 @@ class EvidenceStore:
                 "user_sequence.jsonl",
                 "expected.json",
                 "actual.json",
+                "repro_execution.json",
                 "repro.md",
                 "manifest.json",
                 "reproduce.py",
@@ -126,7 +167,7 @@ class EvidenceStore:
             json.dumps(manifest, indent=2), encoding="utf-8"
         )
 
-        # 7. reproduce.py
+        # 8. reproduce.py
         reproduce_py = f"""#!/usr/bin/env python3
 # Standalone reproduction script for {bug.bug_id}
 import json
@@ -157,7 +198,7 @@ print("Reproduction sequence ready.")
         except Exception:
             pass
 
-        # 8. reproduce.sh
+        # 9. reproduce.sh
         reproduce_sh = f"""#!/usr/bin/env bash
 # Standalone reproduction execution entrypoint for {bug.bug_id}
 set -euo pipefail

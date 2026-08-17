@@ -3,10 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class MesaSettings(BaseModel):
+class StrictBaseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MesaSettings(StrictBaseModel):
     repo_path: Path = Field(default=Path("/home/yasin/Desktop/MESA"))
     python_path: Path = Field(default=Path("/home/yasin/Desktop/MESA/.venv/bin/python"))
     runtime_profile: str = "combined"
@@ -46,12 +50,12 @@ class MesaSettings(BaseModel):
         return v
 
 
-class CandidateSettings(BaseModel):
+class CandidateSettings(StrictBaseModel):
     worktree_root: Path = Field(default=Path("/home/yasin/Desktop/MESA-QA-candidate"))
     branch_prefix: str = "qa/autonomous"
 
 
-class RunSettings(BaseModel):
+class RunSettings(StrictBaseModel):
     duration_hours: float = 8.0
     profile: str = "lite"
     seed: int = 42
@@ -59,7 +63,7 @@ class RunSettings(BaseModel):
     cadence_seconds_max: float = 120.0
 
 
-class CodexSettings(BaseModel):
+class CodexSettings(StrictBaseModel):
     binary: str = "codex"
     tester_model: Optional[str] = None
     repair_model: Optional[str] = None
@@ -69,14 +73,14 @@ class CodexSettings(BaseModel):
     auth_type: str = "local"
 
 
-class ApprovalSettings(BaseModel):
+class ApprovalSettings(StrictBaseModel):
     enabled: bool = True
     operator_principal: str = "mesa-qa-operator"
     timeout_seconds: float = 90.0
     poll_interval_seconds: float = 2.0
 
 
-class RepairSettings(BaseModel):
+class RepairSettings(StrictBaseModel):
     enabled: bool = False
     max_repairs_per_run: int = 10
     require_pre_fix_failure: bool = True
@@ -85,20 +89,20 @@ class RepairSettings(BaseModel):
     auto_merge: bool = False
 
 
-class VerificationSettings(BaseModel):
+class VerificationSettings(StrictBaseModel):
     targeted_tests_only_per_fix: bool = True
     full_suite_at_end: bool = True
     full_suite_every_n_repairs: int = 3
     run_full_suite: bool = False
 
 
-class ResourcesSettings(BaseModel):
+class ResourcesSettings(StrictBaseModel):
     sample_seconds: int = 60
     warn_rss_mb: int = 6000
     hard_stop_rss_mb: int = 12000
 
 
-class SafetySettings(BaseModel):
+class SafetySettings(StrictBaseModel):
     require_clean_main: bool = True
     forbid_main_branch_write: bool = True
     forbid_network_in_repair: bool = True
@@ -109,7 +113,7 @@ class SafetySettings(BaseModel):
     )
 
 
-class QAConfig(BaseModel):
+class QAConfig(StrictBaseModel):
     mesa: MesaSettings = Field(default_factory=MesaSettings)
     candidate: CandidateSettings = Field(default_factory=CandidateSettings)
     run: RunSettings = Field(default_factory=RunSettings)

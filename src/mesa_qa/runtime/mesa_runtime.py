@@ -67,6 +67,7 @@ class MesaCandidateRuntime:
                 "true" if self.external_provider_enabled else "false"
             ),
             "MESA_LLM_PROVIDER": self.llm_provider,
+            "MESA_EXTRACTION_PROVIDER": self.llm_provider,
             "MESA_EMBEDDING_DIMENSION": "384",
             "MESA_PORT": str(self.port),
             "MESA_API_KEY": self.api_key,
@@ -116,9 +117,16 @@ class MesaCandidateRuntime:
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout_seconds:
             if self._process and self._process.returncode is not None:
+                log_snippet = ""
+                if self.log_file and self.log_file.exists():
+                    try:
+                        log_snippet = self.log_file.read_text(encoding="utf-8")[-1000:]
+                    except Exception:
+                        pass
                 logger.error(
-                    "MESA process exited prematurely with code %d",
+                    "MESA process exited prematurely with code %d. Log snippet:\n%s",
                     self._process.returncode,
+                    log_snippet,
                 )
                 return False
             health = await check_mesa_health(
@@ -132,19 +140,18 @@ class MesaCandidateRuntime:
         return False
 
     async def stop(self) -> None:
-        if self._process is None or self._process.returncode is not None:
-            return
-        logger.info("Stopping MESA candidate process PID %d...", self._process.pid)
-        try:
-            self._process.send_signal(signal.SIGTERM)
+        if self._process is not None and self._process.returncode is None:
+            logger.info("Stopping MESA candidate process PID %d...", self._process.pid)
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=10.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "MESA process did not terminate gracefully; force killing..."
-                )
-                self._process.kill()
-                await self._process.wait()
-        except ProcessLookupError:
-            pass
-        logger.info("MESA candidate process stopped.")
+                self._process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "MESA process did not terminate gracefully; force killing..."
+                    )
+                    self._process.kill()
+                    await self._process.wait()
+            except ProcessLookupError:
+                pass
+            logger.info("MESA candidate process stopped.")

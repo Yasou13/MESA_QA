@@ -170,6 +170,7 @@ async def test_controlled_candidate_repair_e2e_full_chain(tmp_path, monkeypatch)
         "action_count": 1,
     }
     state_dict["status"] = "COMPLETED"
+    state_dict["action_count"] = 1
     
     # Update bug status in controller list to match DB
     controller._bugs[0]["status"] = "VERIFIED"

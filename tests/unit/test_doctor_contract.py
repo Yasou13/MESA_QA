@@ -83,3 +83,46 @@ candidate:
     success, passes, issues = run_doctor_checks(config_path=cfg_file, mesa_repo=repo)
     assert success is False
     assert any("Candidate root cannot equal MESA main checkout" in iss for iss in issues)
+
+
+def test_doctor_detects_missing_codex_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    repo = tmp_path / "MESA"
+    _init_git_repo(repo)
+
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    (venv_bin / "python").write_text("#!/bin/sh\nexit 0\n")
+    (venv_bin / "python").chmod(0o755)
+    (venv_bin / "mesa").write_text("#!/bin/sh\nexit 0\n")
+    (venv_bin / "mesa").chmod(0o755)
+
+    with patch("shutil.which", return_value=None):
+        success, passes, issues = run_doctor_checks(mesa_repo=repo)
+        assert success is False
+        assert any("Codex CLI executable" in iss for iss in issues)
+
+
+def test_doctor_detects_missing_pytest(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    repo = tmp_path / "MESA"
+    _init_git_repo(repo)
+
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    # Python script that fails when -m pytest is requested
+    (venv_bin / "python").write_text("""#!/usr/bin/env python3
+import sys
+if "-m" in sys.argv and "pytest" in sys.argv:
+    sys.exit(1)
+sys.exit(0)
+""")
+    (venv_bin / "python").chmod(0o755)
+    (venv_bin / "mesa").write_text("#!/bin/sh\nexit 0\n")
+    (venv_bin / "mesa").chmod(0o755)
+
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        success, passes, issues = run_doctor_checks(mesa_repo=repo)
+        assert success is False
+        assert any("pytest is missing" in iss for iss in issues)
+

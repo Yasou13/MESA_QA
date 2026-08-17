@@ -32,6 +32,12 @@ async def test_thread_rotation_gate_pass(tmp_path, monkeypatch):
     assert controller.tester.thread_id is None
     assert controller._rotation_pending_old_thread == "thread-1"
 
+    # Action record in DB is initially PENDING
+    actions = await controller.controller_db.list_actions("run-rot-pass")
+    assert len(actions) == 1
+    assert actions[0]["verdict"] == "PENDING"
+    assert actions[0]["response"]["status"] == "PENDING"
+
     # 3. Next recall event executes on fresh thread-2
     async def mock_execute(*args, **kwargs):
         controller.tester.thread_id = "thread-2"
@@ -49,6 +55,13 @@ async def test_thread_rotation_gate_pass(tmp_path, monkeypatch):
         id="ev-recall", kind=ActionKind.RECALL, entity="project:atlas", field="backend", expected="FastAPI"
     )
     await controller._process_event(recall_ev)
+
+    # Verify action record in DB is now updated to PASS
+    actions = await controller.controller_db.list_actions("run-rot-pass")
+    assert len(actions) == 2
+    rot_action = next(a for a in actions if a["action_type"] == "rotate_session")
+    assert rot_action["verdict"] == "PASS"
+    assert rot_action["response"]["status"] == "PASS"
 
     # Verify evidence record
     rot_records = controller.evidence_store.read_json_records("thread_rotation.json")
@@ -96,6 +109,10 @@ async def test_thread_rotation_gate_fails_if_same_thread(tmp_path, monkeypatch):
     assert len(rot_records) == 1
     assert rot_records[0]["status"] == "FAIL"
 
+    actions = await controller.controller_db.list_actions("run-rot-fail-same")
+    rot_action = next(a for a in actions if a["action_type"] == "rotate_session")
+    assert rot_action["verdict"] == "FAIL"
+
 
 @pytest.mark.asyncio
 async def test_thread_rotation_gate_fails_if_recall_fails(tmp_path, monkeypatch):
@@ -132,3 +149,62 @@ async def test_thread_rotation_gate_fails_if_recall_fails(tmp_path, monkeypatch)
     assert rot_records[0]["status"] == "FAIL"
     assert rot_records[0]["recall_verdict"] == "FAIL"
 
+
+@pytest.mark.asyncio
+async def test_thread_rotation_gate_fails_if_no_mcp_tool_called(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    controller = QAController(QAConfig.load(), run_id="run-rot-fail-no-mcp")
+    await controller.controller_db.initialize()
+    await controller.oracle_db.initialize()
+    controller.state_machine._current_state = State.RUNNING
+
+    controller.tester.thread_id = "thread-1"
+    rot_ev = ScenarioEvent(id="ev-rot", kind=ActionKind.ROTATE_SESSION, entity="project:atlas")
+    await controller._process_event(rot_ev)
+
+    # Fresh thread created, answer provided from memory without calling mesa_recall MCP tool
+    async def mock_execute(*args, **kwargs):
+        controller.tester.thread_id = "thread-2"
+        return TesterObservation(
+            action_id="act-recall",
+            scenario_event_id="ev-recall",
+            tools_called=[],
+            actual={"answer": "Project Atlas uses FastAPI framework"},
+            tester_assessment="pass",
+        )
+
+    controller.tester.execute_action = AsyncMock(side_effect=mock_execute)
+
+    recall_ev = ScenarioEvent(
+        id="ev-recall", kind=ActionKind.RECALL, entity="project:atlas", field="backend", expected="FastAPI"
+    )
+    await controller._process_event(recall_ev)
+
+    rot_records = controller.evidence_store.read_json_records("thread_rotation.json")
+    assert len(rot_records) == 1
+    assert rot_records[0]["status"] == "FAIL"
+    assert rot_records[0]["mcp_tool_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_thread_rotation_pending_on_shutdown_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    controller = QAController(QAConfig.load(), run_id="run-rot-shutdown")
+    await controller.controller_db.initialize()
+    await controller.oracle_db.initialize()
+    controller.state_machine._current_state = State.RUNNING
+
+    controller.tester.thread_id = "thread-1"
+    rot_ev = ScenarioEvent(id="ev-rot", kind=ActionKind.ROTATE_SESSION, entity="project:atlas")
+    await controller._process_event(rot_ev)
+
+    # Controller shuts down while rotation is still PENDING without subsequent verification
+    await controller.shutdown()
+
+    rot_records = controller.evidence_store.read_json_records("thread_rotation.json")
+    assert len(rot_records) == 1
+    assert rot_records[0]["status"] == "FAIL"
+
+    actions = await controller.controller_db.list_actions("run-rot-shutdown")
+    rot_action = next(a for a in actions if a["action_type"] == "rotate_session")
+    assert rot_action["verdict"] == "FAIL"

@@ -50,10 +50,26 @@ class WorktreeManager:
 
     def capture_main_baseline(self) -> Dict[str, str]:
         """Read-only integrity snapshot; dirty user work is allowed but immutable."""
+        try:
+            toplevel = self._run_git(self.main_repo, ["rev-parse", "--show-toplevel"]).strip()
+        except Exception:
+            toplevel = str(self.main_repo)
+        try:
+            common_dir = self._run_git(self.main_repo, ["rev-parse", "--git-common-dir"]).strip()
+        except Exception:
+            common_dir = str(self.main_repo / ".git")
+        try:
+            untracked = self._run_git(self.main_repo, ["ls-files", "--others", "--exclude-standard"]).strip()
+        except Exception:
+            untracked = ""
+
         return {
             "head": self._run_git(self.main_repo, ["rev-parse", "HEAD"]).strip(),
             "status": self._run_git(self.main_repo, ["status", "--porcelain=v1", "--untracked-files=all"]),
             "tracked_diff": self._run_git(self.main_repo, ["diff", "--binary"]),
+            "toplevel": toplevel,
+            "common_dir": common_dir,
+            "untracked_files": untracked,
         }
 
     def capture_candidate_snapshot(self, worktree_path: Path) -> Dict[str, Any]:
@@ -72,12 +88,11 @@ class WorktreeManager:
 
     def assert_main_unchanged(self, baseline: Dict[str, str]) -> None:
         current = self.capture_main_baseline()
-        if current != baseline:
-            mismatches = {
-                k: {"baseline": baseline.get(k), "current": current.get(k)}
-                for k in set(baseline) | set(current)
-                if baseline.get(k) != current.get(k)
-            }
+        mismatches = {}
+        for k, v in baseline.items():
+            if v is not None and current.get(k) != v:
+                mismatches[k] = {"baseline": v, "current": current.get(k)}
+        if mismatches:
             logger.error("Original MESA checkout changed during QA lifecycle: %s", mismatches)
             raise RuntimeError(f"P0 safety failure: original MESA checkout changed during MESA-QA lifecycle: {mismatches}")
 

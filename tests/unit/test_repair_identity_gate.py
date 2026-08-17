@@ -79,3 +79,36 @@ def test_broken_lineage_fails(tmp_path):
     ok, reason = mgr.validate_candidate_identity(wt_path, baseline_commit=fake_sha)
     assert not ok
     assert "lineage" in reason.lower() or "descendant" in reason.lower()
+
+
+def test_detached_head_fails_identity_gate(tmp_path):
+    main_repo = tmp_path / "main_repo"
+    candidate_root = tmp_path / "candidate_root"
+    base_sha = _init_git_repo(main_repo)
+    
+    mgr = WorktreeManager(main_repo=main_repo, candidate_root=candidate_root)
+    wt_path, branch, head = mgr.create_candidate_worktree("detached-check")
+    
+    # Detach HEAD
+    subprocess.run(["git", "checkout", "--detach"], cwd=wt_path, check=True, capture_output=True)
+    
+    ok, reason = mgr.validate_candidate_identity(wt_path, baseline_commit=base_sha)
+    assert not ok
+    assert "detached" in reason.lower() or "branch" in reason.lower()
+    with pytest.raises(RuntimeError):
+        mgr.assert_candidate_identity(wt_path, baseline_commit=base_sha)
+
+
+def test_corrupted_worktree_fails_identity_gate(tmp_path):
+    main_repo = tmp_path / "main_repo"
+    candidate_root = tmp_path / "candidate_root"
+    base_sha = _init_git_repo(main_repo)
+    
+    mgr = WorktreeManager(main_repo=main_repo, candidate_root=candidate_root)
+    wt_path = candidate_root / "corrupted_wt"
+    wt_path.mkdir(parents=True, exist_ok=True)
+    
+    ok, reason = mgr.validate_candidate_identity(wt_path, baseline_commit=base_sha)
+    assert not ok
+    with pytest.raises(RuntimeError):
+        mgr.assert_candidate_identity(wt_path, baseline_commit=base_sha)

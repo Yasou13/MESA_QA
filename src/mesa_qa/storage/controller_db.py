@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ class ControllerDB:
                     started_at TEXT NOT NULL,
                     planned_end_at TEXT,
                     baseline_main_head TEXT,
+                    baseline_main_json TEXT,
                     candidate_base_sha TEXT,
                     candidate_branch TEXT,
                     candidate_head TEXT,
@@ -102,15 +104,16 @@ class ControllerDB:
             await db.execute(
                 """
                 INSERT INTO run_state (
-                    run_id, status, started_at, planned_end_at, baseline_main_head,
+                    run_id, status, started_at, planned_end_at, baseline_main_head, baseline_main_json,
                     candidate_base_sha, candidate_branch, candidate_head, candidate_worktree, qa_storage_root,
                     current_epoch, action_count, confirmed_bug_count, verified_repair_count, last_updated_at,
                     scenario_cursor, scenario_seed, tester_thread_id, mesa_pid, mcp_gateway_pid
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     status=excluded.status,
                     planned_end_at=excluded.planned_end_at,
                     baseline_main_head=excluded.baseline_main_head,
+                    baseline_main_json=excluded.baseline_main_json,
                     candidate_base_sha=excluded.candidate_base_sha,
                     candidate_branch=excluded.candidate_branch,
                     candidate_head=excluded.candidate_head,
@@ -130,9 +133,10 @@ class ControllerDB:
                 (
                     state["run_id"],
                     state["status"],
-                    state["started_at"],
+                    state.get("started_at") or datetime.now(timezone.utc).isoformat(),
                     state.get("planned_end_at"),
                     state.get("baseline_main_head"),
+                    state.get("baseline_main_json"),
                     state.get("candidate_base_sha"),
                     state.get("candidate_branch"),
                     state.get("candidate_head"),
@@ -212,6 +216,25 @@ class ControllerDB:
                     executed_at,
                 ),
             )
+            await db.commit()
+
+    async def update_action_verdict(
+        self,
+        action_id: str,
+        verdict: str,
+        response: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            if response is not None:
+                await db.execute(
+                    "UPDATE action_log SET verdict = ?, response_json = ? WHERE action_id = ?",
+                    (verdict, json.dumps(response), action_id),
+                )
+            else:
+                await db.execute(
+                    "UPDATE action_log SET verdict = ? WHERE action_id = ?",
+                    (verdict, action_id),
+                )
             await db.commit()
 
     async def list_actions(self, run_id: str) -> List[Dict[str, Any]]:

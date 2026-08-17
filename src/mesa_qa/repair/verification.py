@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import List, Tuple
@@ -17,8 +18,9 @@ class RepairVerifier:
     def run_pytest_on_file(self, candidate_worktree: Path, test_file_rel: str) -> Tuple[bool, str]:
         cmd = [str(self.python_bin), "-m", "pytest", test_file_rel]
         logger.info("Running pytest in %s: %s", candidate_worktree, " ".join(cmd))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         res = subprocess.run(
-            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, env=env
         )
         passed = (res.returncode == 0)
         output = res.stdout + "\n" + res.stderr
@@ -49,8 +51,9 @@ class RepairVerifier:
     def run_full_suite(self, candidate_worktree: Path) -> Tuple[bool, str]:
         cmd = [str(self.python_bin), "-m", "pytest"]
         logger.info("Running full pytest suite in %s: %s", candidate_worktree, " ".join(cmd))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         res = subprocess.run(
-            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, env=env
         )
         passed = (res.returncode == 0)
         output = res.stdout + "\n" + res.stderr
@@ -61,8 +64,9 @@ class RepairVerifier:
             return True, "No targeted tests to run"
         cmd = [str(self.python_bin), "-m", "pytest", *test_paths]
         logger.info("Running targeted pytest suite in %s: %s", candidate_worktree, " ".join(cmd))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         res = subprocess.run(
-            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False, env=env
         )
         passed = (res.returncode == 0)
         output = res.stdout + "\n" + res.stderr

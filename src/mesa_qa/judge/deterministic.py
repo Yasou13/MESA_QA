@@ -26,11 +26,50 @@ class DeterministicJudge:
             state = str(observation.actual.get("operation_state", "")).upper()
             if observation.actual.get("operation_id") and state == "COMMITTED":
                 return Verdict(is_pass=True, is_candidate_anomaly=False)
+
+            error_data = (
+                observation.actual.get("error")
+                if isinstance(observation.actual.get("error"), dict)
+                else {}
+            )
+            error_code = str(error_data.get("code", "")).upper()
+            error_msg = str(error_data.get("message", "")).lower()
+
+            if (
+                state in {"REJECTED", "DENIED"}
+                or "policy" in error_code.lower()
+                or "policy" in error_msg
+                or "denied" in error_code.lower()
+            ):
+                return Verdict(
+                    is_pass=False,
+                    is_candidate_anomaly=False,
+                    category="EXPECTED_POLICY",
+                    reason=f"Operation policy rejection ({state}): {error_msg or error_code or 'rejected'}",
+                    actual=observation.actual,
+                )
+
+            if (
+                "rate_limit" in error_code.lower()
+                or "provider" in error_code.lower()
+                or "rate limit" in error_msg
+                or "provider" in error_msg
+                or state == "TIMEOUT"
+            ):
+                return Verdict(
+                    is_pass=False,
+                    is_candidate_anomaly=False,
+                    category="INFRASTRUCTURE",
+                    reason=f"External provider / infrastructure issue ({state}): {error_msg or error_code or 'unavailable'}",
+                    actual=observation.actual,
+                )
+
             return Verdict(
                 is_pass=False,
-                is_candidate_anomaly=False,
-                category="OPERATION_FINALITY",
-                reason="Write operation is not terminal",
+                is_candidate_anomaly=True,
+                category="CANDIDATE_ANOMALY",
+                reason=f"Write operation failed with terminal state {state}: {error_msg or 'internal failure'}",
+                actual=observation.actual,
             )
         actual = str(
             observation.actual.get("answer")

@@ -20,25 +20,47 @@ class ReportBuilder:
         bugs: List[Dict[str, Any]],
         repairs: List[Dict[str, Any]],
     ) -> str:
-        """Derive overall session verdict (PASS, FAIL, BLOCKED, NOT_RUN) strictly from evidence."""
+        """Derive overall session verdict strictly from evidence.
+        
+        Rules:
+        - NOT_RUN: 0 actions executed or aborted during init/preflight.
+        - BLOCKED: paused or waiting on external blocker.
+        - INCOMPLETE: run stopped early or interrupted before full planned duration.
+        - FAIL: unverified bugs remain, unhandled crashes occurred, or repair failed.
+        - PASS: actions executed, clean completion, ZERO unverified bugs, all repairs verified.
+        """
         status = run_state.get("status", "INIT")
         action_count = run_state.get("action_count", 0)
 
-        if status in ("INIT", "PREFLIGHT") and action_count == 0:
+        if (status in ("INIT", "PREFLIGHT") and action_count == 0) or action_count == 0:
             return "NOT_RUN"
         if status in ("PAUSED", "WAITING_FOR_CODEX"):
             return "BLOCKED"
-        if status == "FAILED":
+        if status in ("FAILED", "CRASHED", "STOPPED_ERROR"):
             return "FAIL"
+        if status in ("STOPPED", "INTERRUPTED"):
+            return "INCOMPLETE"
         if status in ("COMPLETED", "RUNNING", "STOPPING"):
-            # Check if there are unresolved/failed bugs
+            # Check for unverified or failing bugs
             unresolved = [
                 b for b in bugs
                 if b.get("status") not in ("VERIFIED", "REPAIRED")
             ]
             if unresolved:
                 return "FAIL"
-            return "PASS"
+
+            # Check if any repair failed
+            failing_repairs = [
+                r for r in repairs
+                if r.get("status") in ("REPAIR_FAILED", "LIVE_REPRO_FAILED", "POLICY_VIOLATION", "TARGETED_TESTS_FAILED")
+            ]
+            if failing_repairs:
+                return "FAIL"
+
+            if action_count > 0:
+                return "PASS"
+            return "NOT_RUN"
+
         return "NOT_RUN"
 
     def discover_evidence_artifacts(self) -> Dict[str, Any]:

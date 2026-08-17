@@ -122,3 +122,17 @@ class RepairPolicyGuard:
 
     def changed_paths(self, candidate_worktree: Path) -> List[str]:
         return self._get_changed_files(candidate_worktree.resolve())
+
+    def discard_changes(self, candidate_worktree: Path) -> None:
+        """Discard uncommitted modifications and untracked files safely from candidate worktree."""
+        if not candidate_worktree:
+            return
+        try:
+            candidate_worktree = Path(candidate_worktree).resolve()
+            if not candidate_worktree.is_dir():
+                return
+            logger.info("Discarding uncommitted changes in candidate worktree %s...", candidate_worktree)
+            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=candidate_worktree, check=False, capture_output=True)
+            subprocess.run(["git", "clean", "-fd"], cwd=candidate_worktree, check=False, capture_output=True)
+        except Exception as exc:
+            logger.warning("Could not discard changes in %s: %s", candidate_worktree, exc)

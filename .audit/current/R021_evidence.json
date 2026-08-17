@@ -1,0 +1,47 @@
+{
+  "correction_id": "R021",
+  "gates": ["A02", "A03", "A05", "A10", "A11", "A12", "A13", "A15", "A16", "A18", "A45"],
+  "status": "PASS",
+  "verified_at": "2026-08-17T21:31:30Z",
+  "run_details": {
+    "run_id": "qa-20260817-181556-f6ae06c4",
+    "profile": "lite",
+    "duration_minutes_planned": 15.0,
+    "actual_duration_seconds": 920.0,
+    "repair_enabled": false,
+    "candidate_base_sha": "ac3ddcec1209115c127812991676bc86f11d54dd",
+    "candidate_branch": "qa/autonomous-qa-20260817-181556-f6ae06c4",
+    "candidate_worktree": "/home/yasin/Desktop/MESA-QA-candidate/run-qa-20260817-181556-f6ae06c4",
+    "qa_storage_root": "/home/yasin/.local/share/mesa-qa/runs/qa-20260817-181556-f6ae06c4/mesa-storage",
+    "mesa_runtime_pid": 412107,
+    "mcp_gateway_pid": 412295,
+    "total_actions": 7,
+    "confirmed_bugs": 6,
+    "verified_repairs": 0,
+    "session_verdict": "FAIL",
+    "evidence_bundles": [
+      "repro_BUG-0001",
+      "repro_BUG-0002",
+      "repro_BUG-0003",
+      "repro_BUG-0004",
+      "repro_BUG-0005",
+      "repro_BUG-0006"
+    ],
+    "lifecycle_evidence": {
+      "main_integrity_verified": true,
+      "storage_isolation_verified": true,
+      "process_resource_sampling_active": true,
+      "state_machine_transitions": [
+        "INIT -> PREFLIGHT",
+        "PREFLIGHT -> CREATE_CANDIDATE",
+        "CREATE_CANDIDATE -> START_MESA",
+        "START_MESA -> START_MCP",
+        "START_MCP -> RUNNING",
+        "RUNNING -> ANOMALY -> RECHECKING -> REPRODUCING -> CONFIRMED_BUG -> RUNNING",
+        "RUNNING -> WAITING_FOR_CODEX",
+        "WAITING_FOR_CODEX -> STOPPING",
+        "STOPPING -> COMPLETED"
+      ]
+    }
+  }
+}

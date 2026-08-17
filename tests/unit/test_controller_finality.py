@@ -8,6 +8,7 @@ from mesa_qa.config import QAConfig
 from mesa_qa.controller import QAController
 from mesa_qa.mesa.approval import ApprovalLifecycleResult
 from mesa_qa.models import ActionKind, ScenarioEvent, TesterObservation
+from mesa_qa.state_machine import State
 
 
 class FakeApproval:
@@ -34,6 +35,7 @@ async def test_ground_truth_advances_only_after_committed(
     controller = QAController(QAConfig.load(), run_id="run-finality")
     await controller.controller_db.initialize()
     await controller.oracle_db.initialize()
+    controller.state_machine._current_state = State.RUNNING
     controller._binding_context = {
         "client_id": "codex-qa-tester",
         "binding_id": "binding-qa",

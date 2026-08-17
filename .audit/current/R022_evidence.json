@@ -1,0 +1,31 @@
+{
+  "correction_id": "R022",
+  "gates": ["A39", "A40", "A41", "A46"],
+  "status": "PASS",
+  "verified_at": "2026-08-17T21:32:20Z",
+  "verification_details": {
+    "test_files": [
+      "tests/integration/test_controlled_repair_live.py",
+      "tests/integration/test_controlled_repair_e2e.py"
+    ],
+    "chain_verified": {
+      "real_anomaly_detected": true,
+      "stable_independent_reproduction": true,
+      "genuine_pre_fix_fail_enforced": true,
+      "candidate_snapshot_preserved": true,
+      "candidate_identity_verified": true,
+      "actual_bounded_patch_enforced": true,
+      "repairer_success_gate_enforced": true,
+      "bounded_diff_limits_enforced": true,
+      "regression_test_pass_enforced": true,
+      "targeted_tests_pass_enforced": true,
+      "candidate_worktree_commit_verified": true,
+      "main_baseline_isolation_verified": true,
+      "candidate_restart_after_repair": true,
+      "live_mcp_reproduction_pass": true,
+      "verified_verdict_persisted": true,
+      "failed_repair_never_verified": true,
+      "shipped_profiles_repair_disabled": true
+    }
+  }
+}

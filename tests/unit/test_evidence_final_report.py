@@ -7,7 +7,7 @@ import pytest
 from mesa_qa.telemetry.reports import ReportBuilder
 
 
-def test_derive_session_verdict_pass(tmp_path):
+def test_derive_session_verdict_clean_pass(tmp_path):
     builder = ReportBuilder(tmp_path)
     state = {"status": "COMPLETED", "action_count": 50}
     bugs = []
@@ -15,7 +15,7 @@ def test_derive_session_verdict_pass(tmp_path):
     assert builder.derive_session_verdict(state, bugs, repairs) == "PASS"
 
 
-def test_derive_session_verdict_fail(tmp_path):
+def test_derive_session_verdict_unverified_bugs_fail(tmp_path):
     builder = ReportBuilder(tmp_path)
     state = {"status": "COMPLETED", "action_count": 50}
     bugs = [{"bug_id": "BUG-01", "status": "CONFIRMED"}]
@@ -23,11 +23,34 @@ def test_derive_session_verdict_fail(tmp_path):
     assert builder.derive_session_verdict(state, bugs, repairs) == "FAIL"
 
 
+def test_derive_session_verdict_repaired_verified_pass(tmp_path):
+    builder = ReportBuilder(tmp_path)
+    state = {"status": "COMPLETED", "action_count": 50}
+    bugs = [{"bug_id": "BUG-01", "status": "VERIFIED"}]
+    repairs = [{"bug_id": "BUG-01", "status": "VERIFIED"}]
+    assert builder.derive_session_verdict(state, bugs, repairs) == "PASS"
+
+
+def test_derive_session_verdict_repair_failed_verdict_fail(tmp_path):
+    builder = ReportBuilder(tmp_path)
+    state = {"status": "COMPLETED", "action_count": 50}
+    bugs = [{"bug_id": "BUG-01", "status": "REPAIR_FAILED"}]
+    repairs = [{"bug_id": "BUG-01", "status": "REPAIR_FAILED"}]
+    assert builder.derive_session_verdict(state, bugs, repairs) == "FAIL"
+
+
+def test_derive_session_verdict_partial_run_incomplete(tmp_path):
+    builder = ReportBuilder(tmp_path)
+    assert builder.derive_session_verdict({"status": "STOPPED", "action_count": 10}, [], []) == "INCOMPLETE"
+    assert builder.derive_session_verdict({"status": "INTERRUPTED", "action_count": 10}, [], []) == "INCOMPLETE"
+
+
 def test_derive_session_verdict_blocked_and_not_run(tmp_path):
     builder = ReportBuilder(tmp_path)
     assert builder.derive_session_verdict({"status": "PAUSED", "action_count": 10}, [], []) == "BLOCKED"
     assert builder.derive_session_verdict({"status": "WAITING_FOR_CODEX", "action_count": 10}, [], []) == "BLOCKED"
     assert builder.derive_session_verdict({"status": "INIT", "action_count": 0}, [], []) == "NOT_RUN"
+    assert builder.derive_session_verdict({"status": "COMPLETED", "action_count": 0}, [], []) == "NOT_RUN"
 
 
 def test_generate_final_report_outputs(tmp_path):

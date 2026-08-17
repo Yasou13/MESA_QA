@@ -92,3 +92,26 @@ def test_forbidden_path_untracked(tmp_path):
     assert not ok
     assert "forbidden path" in reason
     assert ".github" in reason
+
+
+def test_discard_changes_cleans_candidate_worktree(tmp_path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    
+    settings = SafetySettings()
+    guard = RepairPolicyGuard(settings)
+    
+    # Create modified tracked file and new untracked file
+    (repo / "README.md").write_text("# Corrupted Content\n", encoding="utf-8")
+    (repo / "unwanted.py").write_text("evil = True\n", encoding="utf-8")
+    
+    # Verify worktree is dirty
+    assert len(guard.changed_paths(repo)) == 2
+    
+    # Discard changes
+    guard.discard_changes(repo)
+    
+    # Verify worktree is clean
+    assert len(guard.changed_paths(repo)) == 0
+    assert not (repo / "unwanted.py").exists()
+    assert (repo / "README.md").read_text(encoding="utf-8") == "# Test Repo\n"

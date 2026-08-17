@@ -106,16 +106,15 @@ class MesaMCPGatewayProcess:
         return False
 
     async def stop(self) -> None:
-        if self._process is None or self._process.returncode is not None:
-            return
-        logger.info("Stopping MESA MCP Gateway process PID %d...", self._process.pid)
-        try:
-            self._process.send_signal(signal.SIGTERM)
+        if self._process is not None and self._process.returncode is None:
+            logger.info("Stopping MESA MCP Gateway process PID %d...", self._process.pid)
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=10.0)
-            except asyncio.TimeoutError:
-                self._process.kill()
-                await self._process.wait()
-        except ProcessLookupError:
-            pass
-        logger.info("MESA MCP Gateway process stopped.")
+                self._process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    self._process.kill()
+                    await self._process.wait()
+            except ProcessLookupError:
+                pass
+            logger.info("MESA MCP Gateway process stopped.")

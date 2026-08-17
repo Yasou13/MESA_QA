@@ -1,0 +1,24 @@
+{
+  "correction_id": "R020",
+  "gates": ["A08", "A09", "A19", "A20", "A42", "A43", "A44"],
+  "status": "PASS",
+  "verified_at": "2026-08-17T21:15:15Z",
+  "run_details": {
+    "run_id": "qa-20260817-181215-e0ac189a",
+    "profile": "lite",
+    "repair_enabled": false,
+    "candidate_base_sha": "ac3ddcec1209115c127812991676bc86f11d54dd",
+    "candidate_branch": "qa/autonomous-qa-20260817-181215-e0ac189a",
+    "candidate_worktree": "/home/yasin/Desktop/MESA-QA-candidate/run-qa-20260817-181215-e0ac189a",
+    "qa_storage_root": "/home/yasin/.local/share/mesa-qa/runs/qa-20260817-181215-e0ac189a/mesa-storage",
+    "mesa_runtime_ready": true,
+    "mcp_gateway_ready": true,
+    "tester_workspace_bootstrapped": true,
+    "mcp_tool_invocations_observed": true,
+    "anomaly_detected_and_reproduced": true,
+    "reproduction_bundle_created": true,
+    "clean_stop_handled": true,
+    "evidence_derived_final_report": true,
+    "safe_teardown_executed": true
+  }
+}

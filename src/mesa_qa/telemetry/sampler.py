@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Iterable, List, Optional
 import psutil
 import logging
 
@@ -18,66 +18,68 @@ class ResourceSampler:
         self.log_file = self.run_dir / "logs" / "resources.jsonl"
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def sample_process_tree(self, pid: Optional[int]) -> Dict[str, Any]:
-        """Sample RSS memory, CPU%, threads, and child process count recursively across process tree."""
+    def sample_process_trees(self, pids: Iterable[Optional[int]]) -> Dict[str, Any]:
+        """Sample RSS memory, CPU%, threads, and child process count across all owned process trees without double counting."""
         timestamp = time.time()
+        valid_pids: List[int] = [int(p) for p in pids if p is not None and int(p) > 0]
         metrics: Dict[str, Any] = {
             "timestamp": timestamp,
-            "pid": pid,
+            "pid": valid_pids[0] if valid_pids else None,
+            "pids": valid_pids,
             "rss_mb": 0.0,
             "cpu_percent": 0.0,
             "num_threads": 0,
             "num_processes": 0,
-            "status": "not_running",
+            "status": "running" if valid_pids else "not_running",
             "hard_limit_exceeded": False,
         }
 
-        if pid:
+        procs_map: Dict[int, psutil.Process] = {}
+        for root_pid in valid_pids:
             try:
-                root_proc = psutil.Process(pid)
-                procs = [root_proc]
+                root_proc = psutil.Process(root_pid)
+                procs_map[root_pid] = root_proc
                 try:
-                    procs.extend(root_proc.children(recursive=True))
+                    for child in root_proc.children(recursive=True):
+                        procs_map[child.pid] = child
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
-
-                total_rss = 0
-                total_cpu = 0.0
-                total_threads = 0
-                active_count = 0
-
-                for proc in procs:
-                    try:
-                        mem = proc.memory_info()
-                        total_rss += mem.rss
-                        total_cpu += proc.cpu_percent(interval=None)
-                        total_threads += proc.num_threads()
-                        active_count += 1
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                        continue
-
-                if active_count > 0:
-                    metrics["rss_mb"] = round(total_rss / (1024 * 1024), 2)
-                    metrics["cpu_percent"] = round(total_cpu, 2)
-                    metrics["num_threads"] = total_threads
-                    metrics["num_processes"] = active_count
-                    metrics["status"] = root_proc.status()
-                else:
-                    metrics["status"] = "dead"
-
             except (psutil.NoSuchProcess, psutil.AccessDenied):
-                metrics["status"] = "dead"
+                continue
+
+        total_rss = 0
+        total_cpu = 0.0
+        total_threads = 0
+        active_count = 0
+
+        for proc in procs_map.values():
+            try:
+                mem = proc.memory_info()
+                total_rss += mem.rss
+                total_cpu += proc.cpu_percent(interval=None)
+                total_threads += proc.num_threads()
+                active_count += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        if active_count > 0:
+            metrics["rss_mb"] = round(total_rss / (1024 * 1024), 2)
+            metrics["cpu_percent"] = round(total_cpu, 2)
+            metrics["num_threads"] = total_threads
+            metrics["num_processes"] = active_count
+        elif valid_pids:
+            metrics["status"] = "dead"
 
         if metrics["rss_mb"] > self.hard_stop_rss_mb:
             metrics["hard_limit_exceeded"] = True
             logger.error(
-                "HARD STOP: Process-tree RSS memory %s MB exceeded hard stop limit of %s MB!",
+                "HARD STOP: Process-trees RSS memory %s MB exceeded hard stop limit of %s MB!",
                 metrics["rss_mb"],
                 self.hard_stop_rss_mb,
             )
         elif metrics["rss_mb"] > self.warn_rss_mb:
             logger.warning(
-                "WARNING: Process-tree RSS memory %s MB exceeded warning threshold of %s MB",
+                "WARNING: Process-trees RSS memory %s MB exceeded warning threshold of %s MB",
                 metrics["rss_mb"],
                 self.warn_rss_mb,
             )
@@ -91,6 +93,10 @@ class ResourceSampler:
 
         return metrics
 
+    def sample_process_tree(self, pid: Optional[int]) -> Dict[str, Any]:
+        """Sample single process tree recursively."""
+        return self.sample_process_trees([pid] if pid else [])
+
     def sample_process(self, pid: Optional[int]) -> Dict[str, Any]:
         """Backward compatible alias for sample_process_tree."""
-        return self.sample_process_tree(pid)
+        return self.sample_process_trees([pid] if pid else [])

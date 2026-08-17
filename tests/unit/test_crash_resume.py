@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 import pytest
@@ -34,6 +35,15 @@ async def test_resume_from_crash_restores_all_state_and_invariants(tmp_path, mon
     controller1.process_mgr.candidate_worktree = cand_wt
     controller1.process_mgr.candidate_branch = "candidate/run-resume-success"
     controller1.process_mgr.candidate_base_sha = "base-sha-12345"
+    controller1._main_baseline = {
+        "head": "main-head-original",
+        "status": "",
+        "tracked_diff": "",
+        "toplevel": "/mock/main",
+        "common_dir": "/mock/main/.git",
+        "untracked_files": "",
+    }
+    controller1.evidence_store.save_json("main_baseline.json", controller1._main_baseline)
 
     controller1.scenario_engine.load_suite()
     controller1.scenario_engine.cursor = 10
@@ -44,9 +54,8 @@ async def test_resume_from_crash_restores_all_state_and_invariants(tmp_path, mon
     # Now create a fresh controller simulating a crash restart
     controller2 = QAController(cfg, run_id=run_id)
     controller2.process_mgr.worktree_mgr._run_git = lambda cwd, args: "head-sha-12345"
-    controller2.process_mgr.worktree_mgr.check_main_hygiene = lambda: {"head": "main-head", "is_clean": True, "branch": "main"}
-    controller2.process_mgr.worktree_mgr.capture_main_baseline = lambda: {"head": "main-head", "status": ""}
-    controller2.process_mgr.worktree_mgr.assert_main_unchanged = lambda baseline: None
+    controller2.process_mgr.worktree_mgr.check_main_hygiene = lambda: {"head": "main-head-original", "is_clean": True, "branch": "main"}
+    controller2.process_mgr.worktree_mgr.capture_main_baseline = lambda: dict(controller1._main_baseline)
     controller2.process_mgr.start_all = AsyncMock()
 
     await controller2.resume_from_crash()
@@ -60,6 +69,7 @@ async def test_resume_from_crash_restores_all_state_and_invariants(tmp_path, mon
     assert controller2.process_mgr.candidate_worktree == cand_wt
     assert controller2.process_mgr.candidate_branch == "candidate/run-resume-success"
     assert controller2.process_mgr.candidate_base_sha == "base-sha-12345"
+    assert controller2._main_baseline == controller1._main_baseline
     assert controller2.state_machine.current == State.RUNNING
 
 
@@ -77,6 +87,7 @@ async def test_resume_from_crash_missing_worktree_fails_closed(tmp_path, monkeyp
         "started_at": "2026-08-16T12:00:00+00:00",
         "candidate_worktree": str(tmp_path / "nonexistent_wt"),
         "candidate_head": "abc",
+        "baseline_main_head": "main-head-001",
     })
 
     controller_resumed = QAController(cfg, run_id=run_id)
@@ -101,12 +112,57 @@ async def test_resume_from_crash_head_mismatch_fails_closed(tmp_path, monkeypatc
         "started_at": "2026-08-16T12:00:00+00:00",
         "candidate_worktree": str(cand_wt),
         "candidate_head": "expected-sha-999",
+        "baseline_main_head": "main-head-001",
     })
 
     controller_resumed = QAController(cfg, run_id=run_id)
     controller_resumed.process_mgr.worktree_mgr._run_git = lambda cwd, args: "mutated-sha-000"
-    controller_resumed.process_mgr.worktree_mgr.check_main_hygiene = lambda: {"head": "main-head", "is_clean": True, "branch": "main"}
-    controller_resumed.process_mgr.worktree_mgr.capture_main_baseline = lambda: {"head": "main-head", "status": ""}
+    controller_resumed.process_mgr.worktree_mgr.check_main_hygiene = lambda: {"head": "main-head-001", "is_clean": True, "branch": "main"}
+    controller_resumed.process_mgr.worktree_mgr.capture_main_baseline = lambda: {"head": "main-head-001", "status": "", "tracked_diff": ""}
 
     with pytest.raises(RuntimeError, match="Candidate HEAD mismatch on resume"):
         await controller_resumed.resume_from_crash()
+
+
+@pytest.mark.asyncio
+async def test_resume_from_crash_main_baseline_mutation_fails_closed(tmp_path, monkeypatch):
+    """Adversarial test: unexpected original MESA changes while controller was dead must fail closed."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    cfg = QAConfig.load()
+    run_id = "run-resume-main-mutated"
+
+    cand_wt = tmp_path / "cand_wt_valid"
+    cand_wt.mkdir()
+
+    controller1 = QAController(cfg, run_id=run_id)
+    await controller1.controller_db.initialize()
+    await controller1.oracle_db.initialize()
+    controller1.process_mgr.worktree_mgr._run_git = lambda cwd, args: "head-sha-12345"
+    controller1.process_mgr.candidate_worktree = cand_wt
+    controller1._main_baseline = {
+        "head": "original-mesa-head-111",
+        "status": "",
+        "tracked_diff": "",
+        "toplevel": "/mock/main",
+        "common_dir": "/mock/main/.git",
+        "untracked_files": "",
+    }
+    controller1.evidence_store.save_json("main_baseline.json", controller1._main_baseline)
+    await controller1._persist_state()
+
+    # Now create controller2 simulating resume after original MESA was changed while controller was dead
+    controller2 = QAController(cfg, run_id=run_id)
+    controller2.process_mgr.worktree_mgr._run_git = lambda cwd, args: "head-sha-12345"
+    controller2.process_mgr.worktree_mgr.check_main_hygiene = lambda: {"head": "unexpected-mesa-mutation-222", "is_clean": False, "branch": "main"}
+    # When inspecting original MESA during resume, return changed baseline
+    controller2.process_mgr.worktree_mgr.capture_main_baseline = lambda: {
+        "head": "unexpected-mesa-mutation-222",
+        "status": "M modified_file.py",
+        "tracked_diff": "diff --git ...",
+        "toplevel": "/mock/main",
+        "common_dir": "/mock/main/.git",
+        "untracked_files": "",
+    }
+
+    with pytest.raises(RuntimeError, match="original MESA checkout changed"):
+        await controller2.resume_from_crash()

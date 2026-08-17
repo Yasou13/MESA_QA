@@ -40,3 +40,19 @@ def test_invalid_validation_modes_rejected():
         with pytest.raises(ValidationError):
             MesaSettings(validation_mode=inv)
 
+
+def test_dead_and_misleading_keys_rejected():
+    forbidden_keys = [
+        {"mesa": {"mock_repair": True}},
+        {"mesa": {"oracle_backend": "mock"}},
+        {"mesa": {"telemetry_port": 9999}},
+        {"candidate": {"reuse_existing": True}},
+        {"run": {"epoch_actions": 50}},
+        {"run": {"restart_every_minutes": 10}},
+        {"run": {"parallel_actions": 4}},
+        {"repair": {"mock_repair": True}},
+    ]
+    for bad_cfg in forbidden_keys:
+        with pytest.raises(ValidationError):
+            QAConfig.model_validate(bad_cfg)
+

@@ -17,6 +17,7 @@ logger = logging.getLogger("mesa_qa.codex_runner")
 class CodexRunner:
     def __init__(self, codex_binary: str = "codex"):
         self.codex_binary = codex_binary
+        self.current_process_pid: Optional[int] = None
 
     async def run(
         self,
@@ -93,6 +94,7 @@ class CodexRunner:
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             )
+            self.current_process_pid = process.pid
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -160,6 +162,8 @@ class CodexRunner:
                 returncode=1,
                 raw_stderr=str(exc),
             )
+        finally:
+            self.current_process_pid = None
 
     async def _capture_output(
         self, process: asyncio.subprocess.Process, limit: int

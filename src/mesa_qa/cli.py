@@ -85,6 +85,18 @@ def run_doctor_checks(
         else:
             passes.append(f"MESA console lifecycle CLI verified at {mesa_cli}")
 
+        probe_pytest = subprocess.run(
+            [str(python_bin), "-m", "pytest", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if probe_pytest.returncode != 0:
+            issues.append(f"pytest is missing in MESA Python environment: {probe_pytest.stderr.strip()}")
+        else:
+            passes.append(f"pytest available in MESA environment ({probe_pytest.stdout.strip()})")
+
     # 4. Codex CLI
     codex_bin = cfg.codex.binary
     if not shutil.which(codex_bin):
@@ -348,11 +360,111 @@ def _cmd_report(args: argparse.Namespace) -> None:
         print(f"Report not found for run {run_id} at {md_report}")
 
 
-def _cmd_teardown(args: argparse.Namespace) -> None:
+async def _safe_kill_pids(pids: List[int]) -> None:
+    for pid in pids:
+        if not pid or pid <= 1:
+            continue
+        try:
+            os.kill(pid, 15)  # SIGTERM
+        except OSError:
+            pass
+    await asyncio.sleep(0.5)
+    for pid in pids:
+        if not pid or pid <= 1:
+            continue
+        try:
+            os.kill(pid, 9)  # SIGKILL
+        except OSError:
+            pass
+
+
+async def _async_cmd_teardown(args: argparse.Namespace) -> None:
+    cfg = QAConfig.load(config_path=args.config) if getattr(args, "config", None) else QAConfig.load()
+    if getattr(args, "mesa_repo", None):
+        cfg.mesa.repo_path = args.mesa_repo.resolve()
+
     qa_root = get_user_qa_root()
-    run_id = args.run_id
-    print(f"Teardown requested for run {run_id or 'all'}.")
+    runs_dir = qa_root / "runs"
+    main_repo = cfg.mesa.repo_path.resolve()
+    candidate_root = cfg.candidate.worktree_root.resolve()
+
+    wt_mgr = WorktreeManager(main_repo=main_repo, candidate_root=candidate_root, branch_prefix=cfg.candidate.branch_prefix)
+
+    run_ids = [args.run_id] if args.run_id else []
+    if not run_ids and runs_dir.exists():
+        run_ids = [d.name for d in runs_dir.iterdir() if d.is_dir() and (d / "controller.db").exists()]
+
+    print(f"Executing safe teardown for {len(run_ids)} run(s)...")
+
+    for rid in run_ids:
+        run_dir = runs_dir / rid
+        db_path = run_dir / "controller.db"
+        pids_to_kill: List[int] = []
+
+        if db_path.exists():
+            try:
+                db = ControllerDB(db_path)
+                await db.initialize()
+                status_data = await db.get_full_status(rid)
+                if status_data:
+                    pids_dict = status_data.get("pids", {})
+                    for p in ("mesa_pid", "mcp_gateway_pid"):
+                        pid_val = pids_dict.get(p)
+                        if isinstance(pid_val, int):
+                            pids_to_kill.append(pid_val)
+            except Exception as exc:
+                logger.warning("Could not read PIDs from %s: %s", db_path, exc)
+
+        if pids_to_kill:
+            print(f"Terminating candidate processes for run {rid}: {pids_to_kill}")
+            await _safe_kill_pids(pids_to_kill)
+
+        # Remove candidate worktrees matching run_id or branch
+        possible_wt_paths = [
+            candidate_root / f"run-{rid}",
+            candidate_root / rid,
+        ]
+        if status_data and status_data.get("candidate_identity", {}).get("worktree"):
+            try:
+                possible_wt_paths.append(Path(status_data["candidate_identity"]["worktree"]))
+            except Exception:
+                pass
+
+        for cand_wt in set(possible_wt_paths):
+            if cand_wt.exists():
+                try:
+                    branch_name = f"{cfg.candidate.branch_prefix}-{rid}"
+                    wt_mgr.remove_candidate_worktree(cand_wt, delete_branch=True, branch_name=branch_name)
+                    print(f"Removed candidate worktree: {cand_wt}")
+                except Exception as exc:
+                    logger.warning("Could not remove worktree %s: %s", cand_wt, exc)
+
+        # Clean lock and socket files from run directory
+        if run_dir.exists():
+            for lf in run_dir.glob("*.lock"):
+                try:
+                    lf.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            for sf in run_dir.glob("*.sock"):
+                try:
+                    sf.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    # Prune git worktrees on main repo
+    try:
+        subprocess.run(["git", "worktree", "prune"], cwd=main_repo, capture_output=True, check=False)
+    except Exception:
+        pass
+
+    print("Teardown completed safely.")
     print("Main MESA repository left untouched.")
+    print("All audit/log records strictly preserved under QA root.")
+
+
+def _cmd_teardown(args: argparse.Namespace) -> None:
+    asyncio.run(_async_cmd_teardown(args))
 
 
 def main() -> None:
@@ -401,6 +513,8 @@ def main() -> None:
     # teardown
     teardown_p = subparsers.add_parser("teardown", help="Safely remove candidate worktree and run data")
     teardown_p.add_argument("run_id", type=str, nargs="?")
+    teardown_p.add_argument("--mesa-repo", type=Path, default=None)
+    teardown_p.add_argument("--config", type=Path, default=None)
 
     args = parser.parse_args()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import time
@@ -114,6 +115,7 @@ class QAController:
         self._approval: Optional[OfficialApprovalLifecycle] = None
         self._binding_context: Optional[Dict[str, str]] = None
         self._rotation_pending_old_thread: Optional[str] = None
+        self._rotation_pending_action_id: Optional[str] = None
         self._current_action_task: Optional[asyncio.Task[Any]] = None
         self._resource_monitor_task: Optional[asyncio.Task[Any]] = None
 
@@ -128,6 +130,7 @@ class QAController:
             "baseline_main_head": str(
                 self.process_mgr.worktree_mgr.check_main_hygiene().get("head")
             ),
+            "baseline_main_json": json.dumps(self._main_baseline) if self._main_baseline is not None else None,
             "candidate_base_sha": str(self.process_mgr.candidate_base_sha or ""),
             "candidate_branch": str(self.process_mgr.candidate_branch or ""),
             "candidate_head": str(
@@ -183,6 +186,7 @@ class QAController:
             await self._set_state(State.PREFLIGHT)
             hygiene = self.process_mgr.worktree_mgr.check_main_hygiene()
             self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
+            self.evidence_store.save_json("main_baseline.json", self._main_baseline)
             logger.info(
                 "Main MESA repository baseline HEAD: %s (clean: %s)",
                 hygiene["head"],
@@ -313,7 +317,20 @@ class QAController:
 
             # Validate candidate worktree hygiene and branch
             self.process_mgr.worktree_mgr.check_main_hygiene()
-            self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
+            persisted_baseline = (
+                self.evidence_store.read_json("main_baseline.json")
+                or (json.loads(state.get("baseline_main_json")) if state.get("baseline_main_json") else None)
+            )
+            if not persisted_baseline:
+                persisted_head = state.get("baseline_main_head")
+                if persisted_head:
+                    persisted_baseline = {"head": persisted_head}
+                else:
+                    raise RuntimeError("Cannot resume run: missing persisted original MESA baseline.")
+
+            # Validate that original MESA did not change while controller was stopped/crashed
+            self.process_mgr.worktree_mgr.assert_main_unchanged(persisted_baseline)
+            self._main_baseline = persisted_baseline
 
             persisted_head = state.get("candidate_head")
             actual_head = self.process_mgr.worktree_mgr._run_git(candidate_wt, ["rev-parse", "HEAD"]).strip()
@@ -395,26 +412,65 @@ class QAController:
                 self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
             raise
 
+    def _get_owned_process_pids(self) -> List[int]:
+        """Collect all active owned subprocess root PIDs (MESA runtime, MCP gateway, Tester Codex, Repair Codex)."""
+        pids: List[int] = []
+        if (
+            self.process_mgr.mesa_runtime
+            and self.process_mgr.mesa_runtime._process
+            and self.process_mgr.mesa_runtime._process.pid
+        ):
+            pids.append(self.process_mgr.mesa_runtime._process.pid)
+        if (
+            self.process_mgr.mcp_gateway
+            and self.process_mgr.mcp_gateway._process
+            and self.process_mgr.mcp_gateway._process.pid
+        ):
+            pids.append(self.process_mgr.mcp_gateway._process.pid)
+        if (
+            self.tester
+            and getattr(self.tester, "runner", None)
+            and getattr(self.tester.runner, "current_process_pid", None)
+        ):
+            pids.append(self.tester.runner.current_process_pid)
+        if (
+            getattr(self, "repair_gate", None)
+            and getattr(self.repair_gate, "repairer", None)
+            and getattr(self.repair_gate.repairer, "runner", None)
+            and getattr(self.repair_gate.repairer.runner, "current_process_pid", None)
+        ):
+            pids.append(self.repair_gate.repairer.runner.current_process_pid)
+        return pids
+
     async def _resource_monitor_loop(self) -> None:
         """Background monitor checking process tree RSS against hard limits every resources.sample_seconds."""
         sample_interval = max(0.5, float(self.config.resources.sample_seconds))
         while not self._stop_requested:
             try:
-                pid = (
-                    self.process_mgr.mesa_runtime._process.pid
-                    if self.process_mgr.mesa_runtime
-                    and self.process_mgr.mesa_runtime._process
-                    else None
-                )
-                metrics = self.sampler.sample_process_tree(pid)
+                pids = self._get_owned_process_pids()
+                metrics = self.sampler.sample_process_trees(pids)
                 if metrics.get("hard_limit_exceeded"):
                     logger.error(
-                        "Process tree exceeded resource hard-stop limit (%s MB > %s MB). Initiating emergency stop...",
+                        "Process trees exceeded resource hard-stop limit (%s MB > %s MB). Initiating emergency stop...",
                         metrics.get("rss_mb"),
                         self.config.resources.hard_stop_rss_mb,
                     )
                     self._stop_requested = True
+                    self.evidence_store.append_json_record(
+                        "resource_breach.json",
+                        {
+                            "run_id": self.run_id,
+                            "rss_mb": metrics.get("rss_mb"),
+                            "hard_stop_rss_mb": self.config.resources.hard_stop_rss_mb,
+                            "num_processes": metrics.get("num_processes"),
+                            "pids_monitored": pids,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+                        await self._set_state(State.STOPPING)
                     await self.cancel_active_action()
+                    await self.process_mgr.stop_all()
                     break
             except Exception as exc:
                 logger.warning("Error in background resource monitor loop: %s", exc)
@@ -423,6 +479,41 @@ class QAController:
                 await asyncio.sleep(sample_interval)
             except asyncio.CancelledError:
                 break
+
+    async def _watch_control_during_action(self, action_task: asyncio.Task[Any]) -> None:
+        """Lightweight local control watcher polling during active actions."""
+        while not action_task.done():
+            await asyncio.sleep(0.15)
+            if action_task.done():
+                break
+            try:
+                ctrl = await self.controller_db.get_control(self.run_id)
+            except Exception as e:
+                logger.debug("Error checking control db during active action: %s", e)
+                continue
+
+            if ctrl == "stop":
+                logger.info("Emergency STOP requested via control DB during active action!")
+                self._stop_requested = True
+                await self.controller_db.clear_control(self.run_id)
+                self.evidence_store.append_json_record(
+                    "emergency_stop.json",
+                    {
+                        "run_id": self.run_id,
+                        "action": "stop",
+                        "active_action_cancelled": True,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+                    await self._set_state(State.STOPPING)
+                if not action_task.done():
+                    action_task.cancel()
+                break
+            elif ctrl == "pause":
+                logger.info("Pause requested via control DB during active action.")
+                self._pause_requested = True
+                await self.controller_db.clear_control(self.run_id)
 
     async def run_loop(self) -> None:
         logger.info(
@@ -481,13 +572,8 @@ class QAController:
                         break
 
                 # Check resources
-                pid = (
-                    self.process_mgr.mesa_runtime._process.pid
-                    if self.process_mgr.mesa_runtime
-                    and self.process_mgr.mesa_runtime._process
-                    else None
-                )
-                self.sampler.sample_process(pid)
+                pids = self._get_owned_process_pids()
+                self.sampler.sample_process_trees(pids)
 
                 if not self.scenario_engine.has_next():
                     logger.info(
@@ -503,12 +589,21 @@ class QAController:
 
                 action_task = asyncio.create_task(self._process_event(event))
                 self._current_action_task = action_task
+                watcher_task = asyncio.create_task(
+                    self._watch_control_during_action(action_task)
+                )
                 try:
                     await action_task
                 except asyncio.CancelledError:
                     logger.info("Active action cancelled by controller.")
                     break
                 finally:
+                    if not watcher_task.done():
+                        watcher_task.cancel()
+                        try:
+                            await watcher_task
+                        except asyncio.CancelledError:
+                            pass
                     self._current_action_task = None
 
                 # Cadence sleep
@@ -627,14 +722,15 @@ class QAController:
             old_thread = self.tester.thread_id
             self.tester.rotate_thread()
             self._rotation_pending_old_thread = old_thread
+            self._rotation_pending_action_id = action_id
             await self.controller_db.record_action(
                 action_id=action_id,
                 run_id=self.run_id,
                 scenario_event_id=event.id,
                 action_type=event.kind.value,
                 request=event.model_dump(),
-                response={"thread_rotated": True, "old_thread_id": old_thread},
-                verdict="PASS",
+                response={"thread_rotated": True, "old_thread_id": old_thread, "status": "PENDING"},
+                verdict="PENDING",
                 executed_at=datetime.now(timezone.utc).isoformat(),
             )
             return
@@ -647,6 +743,7 @@ class QAController:
         if obs.tester_assessment == "infra_error":
             if self._rotation_pending_old_thread is not None:
                 old_thread = self._rotation_pending_old_thread
+                pending_action_id = self._rotation_pending_action_id
                 new_thread = self.tester.thread_id
                 rotation = {
                     "run_id": self.run_id,
@@ -658,7 +755,20 @@ class QAController:
                     "reason": f"Post-rotation action failed with infra_error: {obs.reason}",
                 }
                 self.evidence_store.append_json_record("thread_rotation.json", rotation)
+                if pending_action_id:
+                    await self.controller_db.update_action_verdict(
+                        pending_action_id,
+                        verdict="FAIL",
+                        response={
+                            "thread_rotated": True,
+                            "old_thread_id": old_thread,
+                            "new_thread_id": new_thread,
+                            "status": "FAIL",
+                            "reason": rotation["reason"],
+                        },
+                    )
                 self._rotation_pending_old_thread = None
+                self._rotation_pending_action_id = None
 
             await self.controller_db.record_action(
                 action_id=action_id,
@@ -694,6 +804,7 @@ class QAController:
         # Hard evidence gate for thread rotation
         if self._rotation_pending_old_thread is not None:
             old_thread = self._rotation_pending_old_thread
+            pending_action_id = self._rotation_pending_action_id
             new_thread = self.tester.thread_id
             mcp_tool_verified = (
                 bool(obs.tools_called and "mesa_recall" in obs.tools_called)
@@ -707,6 +818,7 @@ class QAController:
                 and verdict.is_pass
                 and mcp_tool_verified
             )
+            rotation_verdict = "PASS" if rotation_pass else "FAIL"
             rotation = {
                 "run_id": self.run_id,
                 "scenario_event_id": event.id,
@@ -714,7 +826,7 @@ class QAController:
                 "new_thread_id": new_thread,
                 "recall_verdict": "PASS" if verdict.is_pass else "FAIL",
                 "mcp_tool_verified": mcp_tool_verified,
-                "status": "PASS" if rotation_pass else "FAIL",
+                "status": rotation_verdict,
                 "reason": (
                     "Old thread dropped, new distinct thread established, and fresh recall succeeded via MESA MCP"
                     if rotation_pass
@@ -726,7 +838,20 @@ class QAController:
                 ),
             }
             self.evidence_store.append_json_record("thread_rotation.json", rotation)
+            if pending_action_id:
+                await self.controller_db.update_action_verdict(
+                    pending_action_id,
+                    verdict=rotation_verdict,
+                    response={
+                        "thread_rotated": True,
+                        "old_thread_id": old_thread,
+                        "new_thread_id": new_thread,
+                        "status": rotation_verdict,
+                        "reason": rotation["reason"],
+                    },
+                )
             self._rotation_pending_old_thread = None
+            self._rotation_pending_action_id = None
             if not rotation_pass:
                 verdict = Verdict(
                     is_pass=False,
@@ -833,19 +958,30 @@ class QAController:
                 "approval_outcome": lifecycle.outcome,
                 "approval_invoked": lifecycle.approval_invoked,
                 "status_transitions": lifecycle.status_transitions,
+                "error": lifecycle.error,
             }
         )
         assessment = observation.tester_assessment
         reason = observation.reason
         if lifecycle.outcome != "PASS":
-            assessment = "infra_error"
-            reason = f"operation reached terminal failure {lifecycle.final_status}"
+            error_dict = lifecycle.error if isinstance(lifecycle.error, dict) else {}
+            err_code = str(error_dict.get("code", "")).lower()
+            err_msg = str(error_dict.get("message", "")).lower()
+            if "provider" in err_code or "rate_limit" in err_code or "provider" in err_msg or "rate limit" in err_msg or lifecycle.final_status == "TIMEOUT":
+                assessment = "infra_error"
+                reason = f"operation failed with infrastructure issue ({lifecycle.final_status}): {lifecycle.error or 'unavailable'}"
+            elif lifecycle.final_status in {"REJECTED", "DENIED"} or "policy" in err_code or "policy" in err_msg:
+                assessment = "policy_rejection"
+                reason = f"operation policy rejection ({lifecycle.final_status}): {lifecycle.error or 'policy rejected'}"
+            else:
+                assessment = "candidate_anomaly"
+                reason = f"operation candidate anomaly with terminal state {lifecycle.final_status}: {lifecycle.error}"
         return observation.model_copy(
             update={
                 "actual": actual,
                 "tester_assessment": assessment,
                 "reason": reason,
-                "needs_recheck": lifecycle.outcome != "PASS",
+                "needs_recheck": assessment == "infra_error",
             }
         )
 
@@ -936,12 +1072,34 @@ class QAController:
             candidate_commit_before=str(self.process_mgr.candidate_branch),
         )
 
+        repro_execution_data = {
+            "status": "CONFIRMED_ANOMALY",
+            "reproduced": True,
+            "strategy": repro_strategy,
+            "candidate_commit": str(self.process_mgr.candidate_branch),
+            "recheck_action_id": recheck_action_id,
+            "first_verdict": {
+                "category": verdict.category,
+                "reason": verdict.reason,
+                "expected": verdict.expected,
+                "actual": verdict.actual,
+            },
+            "recheck_verdict": {
+                "category": recheck_verdict.category,
+                "reason": recheck_verdict.reason,
+                "expected": recheck_verdict.expected,
+                "actual": recheck_verdict.actual,
+            },
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
         # Create Evidence Bundle
         bundle_dir = self.evidence_store.create_bundle(
             bug=bug,
             user_sequence=[event.model_dump(), recheck_event.model_dump()],
             expected_data={"expected": verdict.expected},
             actual_data={"actual": verdict.actual},
+            repro_execution=repro_execution_data,
         )
         bug.preconditions["bundle_dir"] = str(bundle_dir)
         self._bugs.append(bug.model_dump())
@@ -1013,6 +1171,18 @@ class QAController:
                     test_file,
                     output,
                 )
+                self.evidence_store.append_json_record(
+                    "repair_gate.json",
+                    {
+                        "run_id": self.run_id,
+                        "bug_id": bug.bug_id,
+                        "gate": "PRE_FIX_FAIL",
+                        "status": "FAIL",
+                        "test_file": test_file,
+                        "reason": output,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 self._repairs.append(
                     {
                         "bug_id": bug.bug_id,
@@ -1044,6 +1214,17 @@ class QAController:
 
             if not gate_ok:
                 logger.warning("Repair gate rejected repair: %s", gate_reason)
+                self.evidence_store.append_json_record(
+                    "repair_gate.json",
+                    {
+                        "run_id": self.run_id,
+                        "bug_id": bug.bug_id,
+                        "gate": "GATES_EVALUATION",
+                        "status": "FAIL",
+                        "reason": gate_reason,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 self._repairs.append(
                     {
                         "bug_id": bug.bug_id,
@@ -1070,6 +1251,9 @@ class QAController:
                 )
             )
             bug.preconditions["pre_repair_snapshot"] = pre_repair_snapshot
+            self.evidence_store.save_json(
+                f"pre_repair_snapshot_{bug.bug_id}.json", pre_repair_snapshot
+            )
             self.process_mgr.worktree_mgr.assert_main_unchanged(
                 pre_repair_snapshot["main_baseline"]
             )
@@ -1089,11 +1273,19 @@ class QAController:
                 evidence_summary=f"Bug ID: {bug.bug_id}\nExpected: {bug.expected}\nActual: {bug.actual}",
             )
 
-            # Post-repair candidate identity hard gate
+            # Post-repair candidate identity hard gate & snapshot
             self.process_mgr.worktree_mgr.assert_candidate_identity(
                 self.process_mgr.candidate_worktree,
                 baseline_commit=self.process_mgr.candidate_base_sha,
                 main_baseline=pre_repair_snapshot["main_baseline"],
+            )
+            post_repair_snapshot = (
+                self.process_mgr.worktree_mgr.capture_candidate_snapshot(
+                    self.process_mgr.candidate_worktree
+                )
+            )
+            self.evidence_store.save_json(
+                f"post_repair_snapshot_{bug.bug_id}.json", post_repair_snapshot
             )
 
             # Authoritative Gate: Repairer structured success
@@ -1128,9 +1320,20 @@ class QAController:
             )
             if not diff_ok:
                 logger.warning(
-                    "Repair diff violates safety policy for bug %s: %s",
+                    "Repair diff violates safety policy for bug %s: %s. Discarding uncommitted candidate changes.",
                     bug.bug_id,
                     diff_reason,
+                )
+                self.policy_guard.discard_changes(self.process_mgr.candidate_worktree)
+                self.evidence_store.append_json_record(
+                    "repair_policy_violations.json",
+                    {
+                        "run_id": self.run_id,
+                        "bug_id": bug.bug_id,
+                        "status": "POLICY_VIOLATION",
+                        "reason": diff_reason,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
                 )
                 self._repairs.append(
                     {
@@ -1368,6 +1571,30 @@ class QAController:
             await self.process_mgr.stop_all()
         except Exception as e:
             logger.warning("Error stopping processes during shutdown: %s", e)
+
+        if getattr(self, "_rotation_pending_old_thread", None) is not None:
+            pending_action_id = getattr(self, "_rotation_pending_action_id", None)
+            rotation = {
+                "run_id": self.run_id,
+                "old_thread_id": self._rotation_pending_old_thread,
+                "new_thread_id": self.tester.thread_id,
+                "status": "FAIL",
+                "reason": "Run ended while thread rotation was still PENDING without subsequent verification",
+            }
+            self.evidence_store.append_json_record("thread_rotation.json", rotation)
+            if pending_action_id:
+                await self.controller_db.update_action_verdict(
+                    pending_action_id,
+                    verdict="FAIL",
+                    response={
+                        "thread_rotated": True,
+                        "old_thread_id": self._rotation_pending_old_thread,
+                        "status": "FAIL",
+                        "reason": rotation["reason"],
+                    },
+                )
+            self._rotation_pending_old_thread = None
+            self._rotation_pending_action_id = None
 
         # Save final reports
         try:
