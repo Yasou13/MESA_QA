@@ -41,6 +41,8 @@ class ScenarioEngine:
                     for ev_dict in raw_events:
                         event = ScenarioEvent(
                             id=ev_dict["id"],
+                            template_id=ev_dict["id"],
+                            epoch=0,
                             kind=ActionKind(ev_dict["kind"]),
                             entity=ev_dict.get("entity", "global"),
                             field=ev_dict.get("field"),
@@ -50,6 +52,8 @@ class ScenarioEngine:
                             question=ev_dict.get("question"),
                             mode=ev_dict.get("mode", "current"),
                             expected=ev_dict.get("expected"),
+                            idempotency_key=ev_dict.get("idempotency_key"),
+                            idempotency_strategy=ev_dict.get("idempotency_strategy"),
                             # A seed controls generated scenario identity while preserving
                             # the declared causal ordering of YAML events.
                             effective_at=ev_dict.get("effective_at", f"qa-seed-{self.seed}-{generator.randrange(1_000_000_000):09d}"),
@@ -77,3 +81,7 @@ class ScenarioEngine:
     @property
     def cursor(self) -> int:
         return self._cursor
+
+    @cursor.setter
+    def cursor(self, value: int) -> None:
+        self._cursor = max(0, min(value, len(self.events)))

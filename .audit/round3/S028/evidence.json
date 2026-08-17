@@ -1,0 +1,17 @@
+{
+  "task": "S028",
+  "title": "Capture pre-repair candidate snapshot",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_pre_repair_snapshot.py",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Added capture_candidate_snapshot to WorktreeManager capturing candidate HEAD, branch, status, tracked diff, untracked files, and original MESA baseline.",
+    "Integrated snapshot capture and assert_main_unchanged validation immediately before repair in QAController._execute_repair_pipeline."
+  ]
+}

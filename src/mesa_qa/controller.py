@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from mesa_qa.config import QAConfig
-from mesa_qa.models import BugReport, ScenarioEvent, TesterObservation, Verdict
+from mesa_qa.models import ActionKind, BugReport, ScenarioEvent, TesterObservation, Verdict
 from mesa_qa.oracle.db import OracleDB
 from mesa_qa.oracle.evaluator import OracleEvaluator
 from mesa_qa.repair.evidence import EvidenceStore
@@ -75,11 +75,18 @@ class QAController:
         self.tester = TesterCodex(
             runner=self.codex_runner,
             prompts_dir=Path(__file__).parent.parent.parent / "prompts",
+            gateway_url=f"http://127.0.0.1:{config.mesa.gateway_port}",
+            timeout_seconds=config.codex.tester_timeout_seconds,
+            model=config.codex.tester_model,
+            json_events=config.codex.json_events,
         )
         self.repairer = RepairerCodex(
             runner=self.codex_runner,
             prompts_dir=Path(__file__).parent.parent.parent / "prompts",
             python_bin=config.mesa.python_path,
+            timeout_seconds=config.codex.repair_timeout_seconds,
+            model=config.codex.repair_model,
+            json_events=config.codex.json_events,
         )
 
         self.judge = DeterministicJudge()
@@ -95,6 +102,7 @@ class QAController:
         )
         self.report_builder = ReportBuilder(self.run_dir)
 
+        self._started_at: str = datetime.now(timezone.utc).isoformat()
         self._action_count = 0
         self._epoch = 0
         self._bugs: List[Dict[str, Any]] = []
@@ -106,20 +114,30 @@ class QAController:
         self._approval: Optional[OfficialApprovalLifecycle] = None
         self._binding_context: Optional[Dict[str, str]] = None
         self._rotation_pending_old_thread: Optional[str] = None
+        self._current_action_task: Optional[asyncio.Task[Any]] = None
+        self._resource_monitor_task: Optional[asyncio.Task[Any]] = None
 
     def _on_state_change(self, old_state: State, new_state: State) -> None:
-        asyncio.create_task(self._persist_state())
+        logger.debug("State transition notified: %s -> %s", old_state, new_state)
 
     async def _persist_state(self) -> None:
         state_dict = {
             "run_id": self.run_id,
             "status": self.state_machine.current.value,
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": self._started_at,
             "baseline_main_head": str(
                 self.process_mgr.worktree_mgr.check_main_hygiene().get("head")
             ),
+            "candidate_base_sha": str(self.process_mgr.candidate_base_sha or ""),
             "candidate_branch": str(self.process_mgr.candidate_branch or ""),
-            "candidate_head": str(self.process_mgr.candidate_worktree or ""),
+            "candidate_head": str(
+                self.process_mgr.worktree_mgr._run_git(
+                    self.process_mgr.candidate_worktree, ["rev-parse", "HEAD"]
+                ).strip()
+                if self.process_mgr.candidate_worktree
+                and self.process_mgr.candidate_worktree.exists()
+                else ""
+            ),
             "candidate_worktree": str(self.process_mgr.candidate_worktree or ""),
             "qa_storage_root": str(self.run_dir / "mesa-storage"),
             "current_epoch": self._epoch,
@@ -146,104 +164,265 @@ class QAController:
         }
         await self.controller_db.save_run_state(state_dict)
 
+    async def _set_state(self, new_state: State) -> None:
+        """Atomically transition state machine and await run state persistence."""
+        self.state_machine.transition_to(new_state)
+        await self._persist_state()
+
     async def initialize(self) -> None:
         logger.info("Initializing MESA-QA Controller for run %s...", self.run_id)
         await self.controller_db.initialize()
         await self.oracle_db.initialize()
 
-        # Step 1: Preflight
-        self.state_machine.transition_to(State.PREFLIGHT)
-        hygiene = self.process_mgr.worktree_mgr.check_main_hygiene()
-        self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
-        logger.info(
-            "Main MESA repository baseline HEAD: %s (clean: %s)",
-            hygiene["head"],
-            hygiene["is_clean"],
-        )
+        existing = await self.controller_db.get_run_state(self.run_id)
+        if existing is not None:
+            raise FileExistsError(f"Run ID collision: run '{self.run_id}' already has existing state in database.")
 
-        # Step 2: Create Candidate Worktree
-        self.state_machine.transition_to(State.CREATE_CANDIDATE)
-        candidate_wt = self.process_mgr.setup_worktree(
-            self.run_id, baseline_commit=hygiene["head"]
-        )
-        self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
-        logger.info("Candidate worktree ready at %s", candidate_wt)
-
-        # Step 3: Start MESA Runtime
-        self.state_machine.transition_to(State.START_MESA)
-        await self.process_mgr.start_all()
-        self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
-
-        # Step 4: Start MCP & Provision Binding
-        self.state_machine.transition_to(State.START_MCP)
-        bootstrap = MESABootstrap(
-            candidate_worktree=candidate_wt,
-            python_bin=self.config.mesa.python_path,
-            control_db_path=self.run_dir / "gateway-control.db",
-            gateway_url=self.process_mgr.mcp_gateway.gateway_url,
-        )
-        tester_ws = self.run_dir / "tester_workspace"
-        binding = bootstrap.prepare_tester_workspace(tester_ws)
-        self.tester.configure_mesa_launcher(
-            binding["launcher_prefix"],
-            gateway_url=self.process_mgr.mcp_gateway.gateway_url,
-        )
-        binding_context = dict(binding["binding_context"])
-        gateway_credential = binding_context.pop("gateway_credential")
-        self._binding_context = binding_context
-        if self.config.approval.enabled:
-            status_client = MCPStatusClient(
-                gateway_url=self.process_mgr.mcp_gateway.gateway_url,
-                credential=gateway_credential,
+        try:
+            # Step 1: Preflight
+            await self._set_state(State.PREFLIGHT)
+            hygiene = self.process_mgr.worktree_mgr.check_main_hygiene()
+            self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
+            logger.info(
+                "Main MESA repository baseline HEAD: %s (clean: %s)",
+                hygiene["head"],
+                hygiene["is_clean"],
             )
-            poller = OperationFinalityPoller(
-                status_client,
-                timeout_seconds=self.config.approval.timeout_seconds,
-                interval_seconds=self.config.approval.poll_interval_seconds,
+
+            # Step 2: Create Candidate Worktree
+            await self._set_state(State.CREATE_CANDIDATE)
+            candidate_wt = self.process_mgr.setup_worktree(
+                self.run_id,
+                candidate_ref=self.config.mesa.candidate_ref,
+                baseline_commit=hygiene["head"] if not self.config.mesa.candidate_ref else None,
             )
-            self._approval = OfficialApprovalLifecycle(
+            self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+            logger.info(
+                "Candidate worktree ready at %s (base SHA %s)",
+                candidate_wt,
+                self.process_mgr.candidate_base_sha,
+            )
+
+            # Step 3: Start MESA Runtime
+            await self._set_state(State.START_MESA)
+            await self.process_mgr.start_all()
+            self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+
+            # Step 4: Start MCP & Provision Binding
+            await self._set_state(State.START_MCP)
+            bootstrap = MESABootstrap(
                 candidate_worktree=candidate_wt,
-                mesa_cli=self.config.mesa.python_path.parent / "mesa",
-                mesa_admin_cli=self.config.mesa.python_path.parent / "mesa-v4-admin",
+                python_bin=self.config.mesa.python_path,
                 control_db_path=self.run_dir / "gateway-control.db",
-                policy_db_path=self.run_dir / "mesa-storage" / "rbac_policy.db",
-                operator_principal=self.config.approval.operator_principal,
-                poller=poller,
+                gateway_url=self.process_mgr.mcp_gateway.gateway_url,
             )
-            provisioned = await self._approval.provision_operator()
-            scope = await self._approval.provision_qa_scope(
-                mesa_api_url=self.process_mgr.mesa_runtime.base_url,
-                mesa_api_key=self.process_mgr.mesa_runtime.api_key,
-                api_principal=self.process_mgr.mesa_runtime.principal_id,
-                actor_id=binding_context["principal_id"],
-                tenant_id=binding_context["tenant_id"],
-                workspace_id=binding_context["workspace_id"],
-                dataset_id=binding_context["dataset_id"],
+            tester_ws = self.run_dir / "tester_workspace"
+            binding = bootstrap.prepare_tester_workspace(tester_ws)
+            self.tester.configure_mesa_launcher(
+                binding["launcher_prefix"],
+                gateway_url=self.process_mgr.mcp_gateway.gateway_url,
             )
-            self.evidence_store.append_json_record(
-                "approval_lifecycle.json",
-                {
-                    "run_id": self.run_id,
-                    "event": "operator_principal_provisioned",
-                    **provisioned,
-                },
-            )
-            self.evidence_store.append_json_record(
-                "approval_lifecycle.json",
-                {
-                    "run_id": self.run_id,
-                    "event": "qa_runtime_scope_provisioned",
-                    **scope,
-                },
-            )
+            binding_context = dict(binding["binding_context"])
+            gateway_credential = binding_context.pop("gateway_credential")
+            self._binding_context = binding_context
+            if self.config.approval.enabled:
+                status_client = MCPStatusClient(
+                    gateway_url=self.process_mgr.mcp_gateway.gateway_url,
+                    credential=gateway_credential,
+                )
+                poller = OperationFinalityPoller(
+                    status_client,
+                    timeout_seconds=self.config.approval.timeout_seconds,
+                    interval_seconds=self.config.approval.poll_interval_seconds,
+                )
+                self._approval = OfficialApprovalLifecycle(
+                    candidate_worktree=candidate_wt,
+                    mesa_cli=self.config.mesa.python_path.parent / "mesa",
+                    mesa_admin_cli=self.config.mesa.python_path.parent / "mesa-v4-admin",
+                    control_db_path=self.run_dir / "gateway-control.db",
+                    policy_db_path=self.run_dir / "mesa-storage" / "rbac_policy.db",
+                    operator_principal=self.config.approval.operator_principal,
+                    poller=poller,
+                )
+                provisioned = await self._approval.provision_operator()
+                scope = await self._approval.provision_qa_scope(
+                    mesa_api_url=self.process_mgr.mesa_runtime.base_url,
+                    mesa_api_key=self.process_mgr.mesa_runtime.api_key,
+                    api_principal=self.process_mgr.mesa_runtime.principal_id,
+                    actor_id=binding_context["principal_id"],
+                    tenant_id=binding_context["tenant_id"],
+                    workspace_id=binding_context["workspace_id"],
+                    dataset_id=binding_context["dataset_id"],
+                )
+                self.evidence_store.append_json_record(
+                    "approval_lifecycle.json",
+                    {
+                        "run_id": self.run_id,
+                        "event": "operator_principal_provisioned",
+                        **provisioned,
+                    },
+                )
+                self.evidence_store.append_json_record(
+                    "approval_lifecycle.json",
+                    {
+                        "run_id": self.run_id,
+                        "event": "qa_runtime_scope_provisioned",
+                        **scope,
+                    },
+                )
 
-        # Load Scenarios
-        self.scenario_engine.load_suite()
+            # Load Scenarios
+            self.scenario_engine.load_suite()
 
-        self.state_machine.transition_to(State.RUNNING)
-        logger.info(
-            "MESA-QA Controller initialization complete. Ready to run endurance session."
-        )
+            await self._set_state(State.RUNNING)
+            logger.info(
+                "MESA-QA Controller initialization complete. Ready to run endurance session."
+            )
+        except Exception as exc:
+            logger.exception("Fatal error during initialization: %s", exc)
+            if self.state_machine.current != State.FAILED:
+                await self._set_state(State.FAILED)
+            await self.process_mgr.stop_all()
+            if self._main_baseline is not None:
+                self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+            raise
+
+    async def resume_from_crash(self) -> None:
+        """Restore controller state from persisted database after crash/restart and validate invariants."""
+        logger.info("Resuming MESA-QA Controller for run %s from persisted state...", self.run_id)
+        await self.controller_db.initialize()
+        await self.oracle_db.initialize()
+
+        state = await self.controller_db.get_run_state(self.run_id)
+        if not state:
+            raise RuntimeError(f"Cannot resume run '{self.run_id}': no recorded state in database.")
+
+        try:
+            # Restore and validate metadata
+            self._started_at = state["started_at"]
+            self._epoch = state.get("current_epoch", 0)
+            self._action_count = state.get("action_count", 0)
+            self.tester.thread_id = state.get("tester_thread_id")
+
+            candidate_wt_str = state.get("candidate_worktree")
+            if not candidate_wt_str:
+                raise RuntimeError("Cannot resume run: missing candidate_worktree in persisted state.")
+            candidate_wt = Path(candidate_wt_str)
+            if not candidate_wt.exists():
+                raise FileNotFoundError(f"Cannot resume run: candidate worktree does not exist at {candidate_wt}")
+
+            # Validate candidate worktree hygiene and branch
+            self.process_mgr.worktree_mgr.check_main_hygiene()
+            self._main_baseline = self.process_mgr.worktree_mgr.capture_main_baseline()
+
+            persisted_head = state.get("candidate_head")
+            actual_head = self.process_mgr.worktree_mgr._run_git(candidate_wt, ["rev-parse", "HEAD"]).strip()
+            if persisted_head and actual_head != persisted_head:
+                raise RuntimeError(
+                    f"Candidate HEAD mismatch on resume: expected {persisted_head}, got {actual_head}"
+                )
+
+            self.process_mgr.candidate_worktree = candidate_wt
+            self.process_mgr.candidate_branch = state.get("candidate_branch")
+            self.process_mgr.candidate_base_sha = state.get("candidate_base_sha")
+
+            # Restore Scenario Engine
+            seed = state.get("scenario_seed") or self.config.run.seed
+            self.scenario_engine.seed = seed
+            self.scenario_engine.load_suite()
+            persisted_cursor = state.get("scenario_cursor", 0)
+            self.scenario_engine.cursor = persisted_cursor
+
+            # Restore runtime and MCP binding
+            await self._set_state(State.START_MESA)
+            await self.process_mgr.start_all()
+            self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+
+            await self._set_state(State.START_MCP)
+            gateway_url = (
+                self.process_mgr.mcp_gateway.gateway_url
+                if self.process_mgr.mcp_gateway
+                else f"http://127.0.0.1:{self.config.mesa.gateway_port}"
+            )
+            bootstrap = MESABootstrap(
+                candidate_worktree=candidate_wt,
+                python_bin=self.config.mesa.python_path,
+                control_db_path=self.run_dir / "gateway-control.db",
+                gateway_url=gateway_url,
+            )
+            tester_ws = self.run_dir / "tester_workspace"
+            binding = bootstrap.prepare_tester_workspace(tester_ws)
+            self.tester.configure_mesa_launcher(
+                binding["launcher_prefix"],
+                gateway_url=gateway_url,
+            )
+            binding_context = dict(binding["binding_context"])
+            gateway_credential = binding_context.pop("gateway_credential")
+            self._binding_context = binding_context
+            if self.config.approval.enabled:
+                status_client = MCPStatusClient(
+                    gateway_url=gateway_url,
+                    credential=gateway_credential,
+                )
+                poller = OperationFinalityPoller(
+                    status_client,
+                    timeout_seconds=self.config.approval.timeout_seconds,
+                    interval_seconds=self.config.approval.poll_interval_seconds,
+                )
+                self._approval = OfficialApprovalLifecycle(
+                    candidate_worktree=candidate_wt,
+                    mesa_cli=self.config.mesa.python_path.parent / "mesa",
+                    mesa_admin_cli=self.config.mesa.python_path.parent / "mesa-v4-admin",
+                    control_db_path=self.run_dir / "gateway-control.db",
+                    policy_db_path=self.run_dir / "mesa-storage" / "rbac_policy.db",
+                    operator_principal=self.config.approval.operator_principal,
+                    poller=poller,
+                )
+
+            await self._set_state(State.RUNNING)
+            logger.info(
+                "MESA-QA Controller crash resume complete. Resumed at epoch %d, cursor %d, action_count %d.",
+                self._epoch,
+                self.scenario_engine.cursor,
+                self._action_count,
+            )
+        except Exception as exc:
+            logger.exception("Fatal error during resume: %s", exc)
+            if self.state_machine.current != State.FAILED:
+                await self._set_state(State.FAILED)
+            await self.process_mgr.stop_all()
+            if self._main_baseline is not None:
+                self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+            raise
+
+    async def _resource_monitor_loop(self) -> None:
+        """Background monitor checking process tree RSS against hard limits every resources.sample_seconds."""
+        sample_interval = max(0.5, float(self.config.resources.sample_seconds))
+        while not self._stop_requested:
+            try:
+                pid = (
+                    self.process_mgr.mesa_runtime._process.pid
+                    if self.process_mgr.mesa_runtime
+                    and self.process_mgr.mesa_runtime._process
+                    else None
+                )
+                metrics = self.sampler.sample_process_tree(pid)
+                if metrics.get("hard_limit_exceeded"):
+                    logger.error(
+                        "Process tree exceeded resource hard-stop limit (%s MB > %s MB). Initiating emergency stop...",
+                        metrics.get("rss_mb"),
+                        self.config.resources.hard_stop_rss_mb,
+                    )
+                    self._stop_requested = True
+                    await self.cancel_active_action()
+                    break
+            except Exception as exc:
+                logger.warning("Error in background resource monitor loop: %s", exc)
+
+            try:
+                await asyncio.sleep(sample_interval)
+            except asyncio.CancelledError:
+                break
 
     async def run_loop(self) -> None:
         logger.info(
@@ -253,74 +432,128 @@ class QAController:
         start_time = time.time()
         max_duration_sec = self.config.run.duration_hours * 3600
 
-        while time.time() - start_time < max_duration_sec:
-            control = await self.controller_db.get_control(self.run_id)
-            if control == "pause":
-                self._pause_requested = True
-            elif control == "resume":
-                self._pause_requested = False
-            elif control == "stop":
-                self._stop_requested = True
-            if self.state_machine.current == State.WAITING_FOR_CODEX:
-                if control == "resume":
-                    self.state_machine.transition_to(State.RUNNING)
-                    await self._persist_state()
-                else:
-                    await asyncio.sleep(1.0)
-                    continue
-            if self._stop_requested:
-                logger.info("Stop requested. Exiting endurance loop.")
-                break
+        self._resource_monitor_task = asyncio.create_task(self._resource_monitor_loop())
 
-            if self._pause_requested:
-                self.state_machine.transition_to(State.PAUSED)
-                logger.info("Controller PAUSED. Waiting for resume...")
-                while self._pause_requested and not self._stop_requested:
-                    await asyncio.sleep(2.0)
-                if not self._stop_requested:
-                    self.state_machine.transition_to(State.RUNNING)
+        try:
+            while time.time() - start_time < max_duration_sec:
+                control = await self.controller_db.get_control(self.run_id)
+                if control == "pause":
+                    self._pause_requested = True
+                    await self.controller_db.clear_control(self.run_id)
+                elif control == "resume":
+                    self._pause_requested = False
+                    await self.controller_db.clear_control(self.run_id)
+                elif control == "stop":
+                    self._stop_requested = True
+                    await self.controller_db.clear_control(self.run_id)
 
-            # Check resources
-            pid = (
-                self.process_mgr.mesa_runtime._process.pid
-                if self.process_mgr.mesa_runtime
-                and self.process_mgr.mesa_runtime._process
-                else None
-            )
-            self.sampler.sample_process(pid)
+                if self.state_machine.current == State.WAITING_FOR_CODEX:
+                    if control == "resume":
+                        await self._set_state(State.RUNNING)
+                    elif control == "stop" or self._stop_requested:
+                        break
+                    else:
+                        await asyncio.sleep(1.0)
+                        continue
 
-            if not self.scenario_engine.has_next():
-                logger.info(
-                    "End of scenario queue reached. Resetting cursor for continuous endurance..."
+                if self._stop_requested:
+                    logger.info("Stop requested. Exiting endurance loop.")
+                    break
+
+                if self._pause_requested:
+                    await self._set_state(State.PAUSED)
+                    logger.info("Controller PAUSED. Waiting for resume...")
+                    while self._pause_requested and not self._stop_requested:
+                        await asyncio.sleep(0.5)
+                        pause_ctrl = await self.controller_db.get_control(self.run_id)
+                        if pause_ctrl == "resume":
+                            self._pause_requested = False
+                            await self.controller_db.clear_control(self.run_id)
+                            break
+                        elif pause_ctrl == "stop":
+                            self._stop_requested = True
+                            await self.controller_db.clear_control(self.run_id)
+                            break
+
+                    if not self._stop_requested:
+                        await self._set_state(State.RUNNING)
+                    else:
+                        break
+
+                # Check resources
+                pid = (
+                    self.process_mgr.mesa_runtime._process.pid
+                    if self.process_mgr.mesa_runtime
+                    and self.process_mgr.mesa_runtime._process
+                    else None
                 )
-                self.scenario_engine.reset()
-                self._epoch += 1
+                self.sampler.sample_process(pid)
 
-            event = self.scenario_engine.next_event()
-            if not event:
-                await asyncio.sleep(5.0)
-                continue
+                if not self.scenario_engine.has_next():
+                    logger.info(
+                        "End of scenario queue reached. Resetting cursor for continuous endurance..."
+                    )
+                    self.scenario_engine.reset()
+                    self._epoch += 1
 
-            await self._process_event(event)
+                event = self.scenario_engine.next_event()
+                if not event:
+                    await asyncio.sleep(5.0)
+                    continue
 
-            # Cadence sleep
-            cadence = self._rng.uniform(
-                self.config.run.cadence_seconds_min, self.config.run.cadence_seconds_max
-            )
-            await asyncio.sleep(cadence)
+                action_task = asyncio.create_task(self._process_event(event))
+                self._current_action_task = action_task
+                try:
+                    await action_task
+                except asyncio.CancelledError:
+                    logger.info("Active action cancelled by controller.")
+                    break
+                finally:
+                    self._current_action_task = None
 
-        self.state_machine.transition_to(State.STOPPING)
-        await self.shutdown()
-        self.state_machine.transition_to(State.COMPLETED)
-        logger.info("Endurance run completed.")
+                # Cadence sleep
+                cadence = self._rng.uniform(
+                    self.config.run.cadence_seconds_min, self.config.run.cadence_seconds_max
+                )
+                await asyncio.sleep(cadence)
+
+            await self._set_state(State.STOPPING)
+            await self.shutdown()
+            await self._set_state(State.COMPLETED)
+            logger.info("Endurance run completed.")
+        except Exception as exc:
+            logger.exception("Fatal error in run loop: %s", exc)
+            if self.state_machine.current != State.FAILED:
+                await self._set_state(State.FAILED)
+            await self.process_mgr.stop_all()
+            if self._main_baseline is not None:
+                self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
+            raise
+        finally:
+            if self._resource_monitor_task and not self._resource_monitor_task.done():
+                self._resource_monitor_task.cancel()
+                try:
+                    await self._resource_monitor_task
+                except asyncio.CancelledError:
+                    pass
+                self._resource_monitor_task = None
 
     async def _process_event(self, event: ScenarioEvent) -> None:
         self._action_count += 1
         action_id = f"act_{self.run_id}_{self._action_count:06d}"
+        template_id = event.template_id or event.id
+        runtime_event_id = (
+            f"ep{self._epoch}_{template_id}"
+            if self._epoch > 0
+            else template_id
+        )
         event = event.model_copy(
             update={
+                "id": runtime_event_id,
+                "template_id": template_id,
+                "epoch": self._epoch,
                 "idempotency_key": event.idempotency_key
-                or f"qa:{self.run_id}:{action_id}:1"
+                or f"qa:{self.run_id}:{action_id}:1",
             }
         )
 
@@ -410,22 +643,23 @@ class QAController:
         tester_ws = self.run_dir / "tester_workspace"
         env = os.environ.copy()
         obs = await self.tester.execute_action(event, action_id, tester_ws, mcp_env=env)
-        if self._rotation_pending_old_thread is not None:
-            rotation = {
-                "run_id": self.run_id,
-                "scenario_event_id": event.id,
-                "old_thread_id": self._rotation_pending_old_thread,
-                "new_thread_id": self.tester.thread_id,
-                "status": (
-                    "PASS"
-                    if self.tester.thread_id
-                    and self.tester.thread_id != self._rotation_pending_old_thread
-                    else "FAIL"
-                ),
-            }
-            self.evidence_store.append_json_record("thread_rotation.json", rotation)
-            self._rotation_pending_old_thread = None
-        if obs.tester_assessment == "infra_error" and "Codex" in obs.reason:
+
+        if obs.tester_assessment == "infra_error":
+            if self._rotation_pending_old_thread is not None:
+                old_thread = self._rotation_pending_old_thread
+                new_thread = self.tester.thread_id
+                rotation = {
+                    "run_id": self.run_id,
+                    "scenario_event_id": event.id,
+                    "old_thread_id": old_thread,
+                    "new_thread_id": new_thread,
+                    "recall_verdict": "FAIL",
+                    "status": "FAIL",
+                    "reason": f"Post-rotation action failed with infra_error: {obs.reason}",
+                }
+                self.evidence_store.append_json_record("thread_rotation.json", rotation)
+                self._rotation_pending_old_thread = None
+
             await self.controller_db.record_action(
                 action_id=action_id,
                 run_id=self.run_id,
@@ -445,8 +679,7 @@ class QAController:
                     "reason": obs.reason,
                 },
             )
-            self.state_machine.transition_to(State.WAITING_FOR_CODEX)
-            await self._persist_state()
+            await self._set_state(State.WAITING_FOR_CODEX)
             return
 
         if event.kind.value in _WRITE_TOOL_BY_KIND:
@@ -457,6 +690,52 @@ class QAController:
 
         # 3. Judge output against Oracle
         verdict = await self.judge.judge(event, obs, self.oracle_eval)
+
+        # Hard evidence gate for thread rotation
+        if self._rotation_pending_old_thread is not None:
+            old_thread = self._rotation_pending_old_thread
+            new_thread = self.tester.thread_id
+            mcp_tool_verified = (
+                bool(obs.tools_called and "mesa_recall" in obs.tools_called)
+                if event.kind.value == "recall"
+                else bool(obs.tools_called)
+            )
+            rotation_pass = bool(
+                old_thread is not None
+                and new_thread is not None
+                and old_thread != new_thread
+                and verdict.is_pass
+                and mcp_tool_verified
+            )
+            rotation = {
+                "run_id": self.run_id,
+                "scenario_event_id": event.id,
+                "old_thread_id": old_thread,
+                "new_thread_id": new_thread,
+                "recall_verdict": "PASS" if verdict.is_pass else "FAIL",
+                "mcp_tool_verified": mcp_tool_verified,
+                "status": "PASS" if rotation_pass else "FAIL",
+                "reason": (
+                    "Old thread dropped, new distinct thread established, and fresh recall succeeded via MESA MCP"
+                    if rotation_pass
+                    else (
+                        f"Rotation gate check failed: old_thread={old_thread!r}, "
+                        f"new_thread={new_thread!r}, verdict_pass={verdict.is_pass}, "
+                        f"mcp_verified={mcp_tool_verified}"
+                    )
+                ),
+            }
+            self.evidence_store.append_json_record("thread_rotation.json", rotation)
+            self._rotation_pending_old_thread = None
+            if not rotation_pass:
+                verdict = Verdict(
+                    is_pass=False,
+                    is_candidate_anomaly=True,
+                    category="THREAD_ROTATION_GATE_FAILURE",
+                    reason=rotation["reason"],
+                    expected=event.expected,
+                    actual=obs.actual,
+                )
 
         # 4. Record action log
         await self.controller_db.record_action(
@@ -592,31 +871,53 @@ class QAController:
     async def _handle_anomaly(
         self, event: ScenarioEvent, obs: TesterObservation, verdict: Verdict
     ) -> None:
-        self.state_machine.transition_to(State.ANOMALY)
+        await self._set_state(State.ANOMALY)
         logger.warning(
             "Candidate anomaly detected for event %s: %s", event.id, verdict.reason
         )
 
         # Step 1: Recheck
-        self.state_machine.transition_to(State.RECHECKING)
+        await self._set_state(State.RECHECKING)
         await asyncio.sleep(3.0)  # Bounded stabilization interval
 
+        # Determine explicit reproduction strategy
+        if (
+            event.idempotency_strategy == "reuse_same_key"
+            or event.kind == ActionKind.IDEMPOTENCY
+        ):
+            repro_strategy = "reuse_same_key"
+            recheck_event = event
+        else:
+            repro_strategy = "fresh_attempt"
+            recheck_action_id = f"recheck_{obs.action_id}"
+            recheck_event = event.model_copy(
+                update={
+                    "idempotency_key": f"qa:{self.run_id}:{recheck_action_id}:2"
+                    if event.idempotency_key
+                    else None
+                }
+            )
+
         # Step 2: Reproduce
-        self.state_machine.transition_to(State.REPRODUCING)
+        await self._set_state(State.REPRODUCING)
+        recheck_action_id = f"recheck_{obs.action_id}"
         recheck_obs = await self.tester.execute_action(
-            event, f"recheck_{obs.action_id}", self.run_dir / "tester_workspace"
+            recheck_event, recheck_action_id, self.run_dir / "tester_workspace"
         )
-        recheck_verdict = await self.judge.judge(event, recheck_obs, self.oracle_eval)
+        recheck_verdict = await self.judge.judge(
+            recheck_event, recheck_obs, self.oracle_eval
+        )
 
         if not recheck_verdict.is_candidate_anomaly:
             logger.info(
-                "Anomaly did not reproduce on recheck. Dismissing transient anomaly."
+                "Anomaly did not reproduce on recheck (strategy=%s). Dismissing transient anomaly.",
+                repro_strategy,
             )
-            self.state_machine.transition_to(State.RUNNING)
+            await self._set_state(State.RUNNING)
             return
 
         # Step 3: Confirmed Bug
-        self.state_machine.transition_to(State.CONFIRMED_BUG)
+        await self._set_state(State.CONFIRMED_BUG)
         severity, category = self.classifier.classify(verdict, event.kind.value)
         bug_id = f"BUG-{len(self._bugs)+1:04d}"
 
@@ -626,7 +927,9 @@ class QAController:
             severity=severity,
             category=category,
             scenario_id=event.id,
-            steps=[event.model_dump()],
+            reproduction_strategy=repro_strategy,
+            preconditions={"reproduction_strategy": repro_strategy},
+            steps=[event.model_dump(), recheck_event.model_dump()],
             expected={"expected": verdict.expected},
             actual={"actual": verdict.actual},
             repeat_count=2,
@@ -634,12 +937,13 @@ class QAController:
         )
 
         # Create Evidence Bundle
-        self.evidence_store.create_bundle(
+        bundle_dir = self.evidence_store.create_bundle(
             bug=bug,
-            user_sequence=[event.model_dump()],
+            user_sequence=[event.model_dump(), recheck_event.model_dump()],
             expected_data={"expected": verdict.expected},
             actual_data={"actual": verdict.actual},
         )
+        bug.preconditions["bundle_dir"] = str(bundle_dir)
         self._bugs.append(bug.model_dump())
         await self.controller_db.record_bug(
             bug_id,
@@ -662,109 +966,373 @@ class QAController:
         ):
             await self._execute_repair_pipeline(bug, event)
         else:
-            self.state_machine.transition_to(State.RUNNING)
+            await self._set_state(State.RUNNING)
 
     async def _execute_repair_pipeline(
         self, bug: BugReport, event: ScenarioEvent
     ) -> None:
-        self.state_machine.transition_to(State.REPAIRING)
+        await self._set_state(State.REPAIRING)
         logger.info("Starting autonomous repair pipeline for bug %s...", bug.bug_id)
 
-        # A QA observation is not a source-path regression.  Only an explicit
-        # evidence-backed command recorded by the reproduction pipeline may
-        # authorize repair.  Never synthesize `expected == actual` tests.
-        test_file = bug.preconditions.get("pre_fix_test_file")
-        if not isinstance(test_file, str) or not test_file:
-            logger.warning(
-                "No genuine pre-fix source-path regression was recorded for %s; repair blocked.",
-                bug.bug_id,
+        try:
+            # A QA observation is not a source-path regression.  Only an explicit
+            # evidence-backed command recorded by the reproduction pipeline may
+            # authorize repair.  Never synthesize `expected == actual` tests.
+            test_file = bug.preconditions.get("pre_fix_test_file")
+            if not isinstance(test_file, str) or not test_file:
+                logger.warning(
+                    "No genuine pre-fix source-path regression was recorded for %s; repair blocked.",
+                    bug.bug_id,
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "NEEDS_REVIEW",
+                        "reason": "missing genuine pre-fix regression",
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "NEEDS_REVIEW",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
+
+            # Verify genuine PRE-FIX FAIL
+            pre_fix_fail_ok, output = self.repair_verifier.verify_pre_fix_failure(
+                self.process_mgr.candidate_worktree, test_file
             )
-            self._repairs.append(
-                {
-                    "bug_id": bug.bug_id,
-                    "status": "NEEDS_REVIEW",
-                    "reason": "missing genuine pre-fix regression",
-                }
+            if not pre_fix_fail_ok:
+                logger.warning(
+                    "PRE-FIX FAIL check failed on %s: %s. Aborting repair.",
+                    test_file,
+                    output,
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "NEEDS_REVIEW",
+                        "reason": f"pre-fix fail check failed: {output[:100]}",
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "NEEDS_REVIEW",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
+
+            logger.info("Genuine PRE-FIX FAIL verified on %s.", test_file)
+
+            # Evaluate Gates G1-G5
+            gate_ok, gate_reason = self.repair_gate.evaluate_gates(
+                bug=bug,
+                candidate_worktree=self.process_mgr.candidate_worktree,
+                stable_reproduction_proven=bug.repeat_count >= 2,
+                pre_fix_test_exists=True,
             )
-            self.state_machine.transition_to(State.RUNNING)
-            return
 
-        # Verify PRE-FIX FAIL
-        pre_fix_pass, output = self.repair_verifier.run_pytest_on_file(
-            self.process_mgr.candidate_worktree, test_file
-        )
-        if pre_fix_pass:
-            logger.warning(
-                "PRE-FIX FAIL check failed (test unexpectedly passed before fix). Aborting repair."
+            if not gate_ok:
+                logger.warning("Repair gate rejected repair: %s", gate_reason)
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "REPAIR_GATE_REJECTED",
+                        "reason": gate_reason,
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "REPAIR_GATE_REJECTED",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
+
+            # Capture pre-repair candidate snapshot & verify main repository integrity
+            pre_repair_snapshot = (
+                self.process_mgr.worktree_mgr.capture_candidate_snapshot(
+                    self.process_mgr.candidate_worktree
+                )
             )
-            self.state_machine.transition_to(State.RUNNING)
-            return
+            bug.preconditions["pre_repair_snapshot"] = pre_repair_snapshot
+            self.process_mgr.worktree_mgr.assert_main_unchanged(
+                pre_repair_snapshot["main_baseline"]
+            )
 
-        logger.info("PRE-FIX FAIL verified on %s.", test_file)
+            # Pre-repair candidate identity hard gate
+            self.process_mgr.worktree_mgr.assert_candidate_identity(
+                self.process_mgr.candidate_worktree,
+                baseline_commit=self.process_mgr.candidate_base_sha,
+                main_baseline=pre_repair_snapshot["main_baseline"],
+            )
 
-        # Evaluate Gates G1-G5
-        gate_ok, gate_reason = self.repair_gate.evaluate_gates(
-            bug=bug,
-            candidate_worktree=self.process_mgr.candidate_worktree,
-            stable_reproduction_proven=bug.repeat_count >= 2,
-            pre_fix_test_exists=True,
-        )
+            # Invoke Repairer Codex
+            await self._set_state(State.VERIFYING)
+            repair_res = await self.repairer.execute_repair(
+                bug=bug,
+                candidate_worktree=self.process_mgr.candidate_worktree,
+                evidence_summary=f"Bug ID: {bug.bug_id}\nExpected: {bug.expected}\nActual: {bug.actual}",
+            )
 
-        if not gate_ok:
-            logger.warning("Repair gate rejected repair: %s", gate_reason)
-            self.state_machine.transition_to(State.RUNNING)
-            return
+            # Post-repair candidate identity hard gate
+            self.process_mgr.worktree_mgr.assert_candidate_identity(
+                self.process_mgr.candidate_worktree,
+                baseline_commit=self.process_mgr.candidate_base_sha,
+                main_baseline=pre_repair_snapshot["main_baseline"],
+            )
 
-        # Invoke Repairer Codex
-        self.state_machine.transition_to(State.VERIFYING)
-        repair_res = await self.repairer.execute_repair(
-            bug=bug,
-            candidate_worktree=self.process_mgr.candidate_worktree,
-            evidence_summary=f"Bug ID: {bug.bug_id}\nExpected: {bug.expected}\nActual: {bug.actual}",
-        )
+            # Authoritative Gate: Repairer structured success
+            if not repair_res.success:
+                logger.warning(
+                    "Repairer reported success=false for bug %s (%s). Commit blocked.",
+                    bug.bug_id,
+                    repair_res.error_message or "repair failed",
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "REPAIR_FAILED",
+                        "reason": f"Repairer reported success=false: {repair_res.error_message or 'repair failed'}",
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "REPAIR_FAILED",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
 
-        # Verify POST-FIX PASS
-        post_fix_pass, _ = self.repair_verifier.run_pytest_on_file(
-            self.process_mgr.candidate_worktree, test_file
-        )
+            # Enforce post-repair bounded diff safety policy
+            diff_ok, diff_reason = self.policy_guard.validate_diff(
+                self.process_mgr.candidate_worktree
+            )
+            if not diff_ok:
+                logger.warning(
+                    "Repair diff violates safety policy for bug %s: %s",
+                    bug.bug_id,
+                    diff_reason,
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "POLICY_VIOLATION",
+                        "reason": diff_reason,
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "POLICY_VIOLATION",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
 
-        if post_fix_pass:
+            # Verify POST-FIX PASS (genuine regression test)
+            post_fix_pass, post_fix_out = self.repair_verifier.run_pytest_on_file(
+                self.process_mgr.candidate_worktree, test_file
+            )
+
+            if not post_fix_pass:
+                logger.warning(
+                    "POST-FIX PASS verification failed for bug %s: %s",
+                    bug.bug_id,
+                    post_fix_out[:200],
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "NEEDS_REVIEW",
+                        "reason": f"post-fix test failed: {post_fix_out[:100]}",
+                    }
+                )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "NEEDS_REVIEW",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self._set_state(State.RUNNING)
+                return
+
+            approved_paths = self.policy_guard.changed_paths(
+                self.process_mgr.candidate_worktree
+            )
+
+            # Run relevant targeted tests
+            targeted_tests = self.repair_verifier.find_targeted_tests(
+                self.process_mgr.candidate_worktree, approved_paths
+            )
+            if targeted_tests:
+                targeted_pass, targeted_out = self.repair_verifier.run_targeted_tests(
+                    self.process_mgr.candidate_worktree, targeted_tests
+                )
+                repair_res.targeted_tests_run = targeted_tests
+                repair_res.targeted_tests_passed = targeted_pass
+                if not targeted_pass:
+                    logger.warning(
+                        "Targeted tests verification failed for bug %s: %s",
+                        bug.bug_id,
+                        targeted_out[:200],
+                    )
+                    self._repairs.append(
+                        {
+                            "bug_id": bug.bug_id,
+                            "status": "TARGETED_TESTS_FAILED",
+                            "reason": f"targeted tests failed: {targeted_out[:100]}",
+                        }
+                    )
+                    await self.controller_db.record_bug(
+                        bug.bug_id,
+                        self.run_id,
+                        bug.severity.value,
+                        bug.category,
+                        bug.model_dump(),
+                        "TARGETED_TESTS_FAILED",
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    await self._set_state(State.RUNNING)
+                    return
+
+            # Run full test suite if configured
+            if self.config.verification.run_full_suite:
+                full_pass, full_out = self.repair_verifier.run_full_suite(
+                    self.process_mgr.candidate_worktree
+                )
+                if not full_pass:
+                    logger.warning(
+                        "Full test suite verification failed for bug %s: %s",
+                        bug.bug_id,
+                        full_out[:200],
+                    )
+                    self._repairs.append(
+                        {
+                            "bug_id": bug.bug_id,
+                            "status": "FULL_SUITE_FAILED",
+                            "reason": f"full suite failed: {full_out[:100]}",
+                        }
+                    )
+                    await self.controller_db.record_bug(
+                        bug.bug_id,
+                        self.run_id,
+                        bug.severity.value,
+                        bug.category,
+                        bug.model_dump(),
+                        "FULL_SUITE_FAILED",
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    await self._set_state(State.RUNNING)
+                    return
+
             sha = self.repair_verifier.commit_repair(
                 self.process_mgr.candidate_worktree,
                 bug.bug_id,
                 bug.category,
-                self.policy_guard.changed_paths(self.process_mgr.candidate_worktree),
+                approved_paths,
             )
-            repair_res.success = True
             repair_res.post_fix_test_passed = True
             repair_res.commit_sha = sha
 
-            self._repairs.append(
-                {"bug_id": bug.bug_id, "status": "VERIFIED", "commit_sha": sha}
-            )
-
-            # Step 5: Restart candidate and live repro
-            self.state_machine.transition_to(State.RESTARTING)
+            # Step 5: Restart candidate runtime and live repro
+            await self._set_state(State.RESTARTING)
             await self.process_mgr.restart_all()
 
-            self.state_machine.transition_to(State.LIVE_RECHECK)
+            await self._set_state(State.LIVE_RECHECK)
             live_obs = await self.tester.execute_action(
                 event, f"live_{bug.bug_id}", self.run_dir / "tester_workspace"
             )
             live_verdict = await self.judge.judge(event, live_obs, self.oracle_eval)
+            repair_res.live_repro_passed = bool(live_verdict.is_pass)
 
             if live_verdict.is_pass:
                 logger.info(
                     "LIVE REPRO PASSED! Bug %s resolved and verified on candidate runtime.",
                     bug.bug_id,
                 )
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "VERIFIED",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "VERIFIED",
+                        "commit_sha": sha,
+                        "live_repro_passed": True,
+                    }
+                )
             else:
                 logger.warning("Live repro failed post-restart for bug %s.", bug.bug_id)
+                await self.controller_db.record_bug(
+                    bug.bug_id,
+                    self.run_id,
+                    bug.severity.value,
+                    bug.category,
+                    bug.model_dump(),
+                    "LIVE_REPRO_FAILED",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                self._repairs.append(
+                    {
+                        "bug_id": bug.bug_id,
+                        "status": "LIVE_REPRO_FAILED",
+                        "commit_sha": sha,
+                        "live_repro_passed": False,
+                    }
+                )
 
-        else:
-            logger.warning("Post-fix test failed for bug %s.", bug.bug_id)
+            await self._set_state(State.RUNNING)
 
-        self.state_machine.transition_to(State.RUNNING)
+        except Exception as exc:
+            logger.exception("Unexpected error in repair pipeline for bug %s: %s", bug.bug_id, exc)
+            self._repairs.append(
+                {
+                    "bug_id": bug.bug_id,
+                    "status": "REPAIR_FAILED",
+                    "reason": f"unexpected error: {exc}",
+                }
+            )
+            await self.controller_db.record_bug(
+                bug.bug_id,
+                self.run_id,
+                bug.severity.value,
+                bug.category,
+                bug.model_dump(),
+                "REPAIR_FAILED",
+                datetime.now(timezone.utc).isoformat(),
+            )
+            await self._set_state(State.RUNNING)
 
     def pause(self) -> None:
         self._pause_requested = True
@@ -772,22 +1340,46 @@ class QAController:
     def resume(self) -> None:
         self._pause_requested = False
 
+    async def cancel_active_action(self) -> None:
+        """Emergency cancellation of currently executing action, codex runner or approval poll."""
+        if self._current_action_task and not self._current_action_task.done():
+            logger.info("Emergency cancelling current active action task...")
+            self._current_action_task.cancel()
+            try:
+                await self._current_action_task
+            except asyncio.CancelledError:
+                pass
+            self._current_action_task = None
+
     async def stop(self) -> None:
         self._stop_requested = True
-        if self.state_machine.current != State.STOPPING:
-            self.state_machine.transition_to(State.STOPPING)
+        if self._resource_monitor_task and not self._resource_monitor_task.done():
+            self._resource_monitor_task.cancel()
+        await self.cancel_active_action()
+        if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+            await self._set_state(State.STOPPING)
         await self.shutdown()
+        if self.state_machine.current != State.COMPLETED:
+            await self._set_state(State.COMPLETED)
 
     async def shutdown(self) -> None:
         logger.info("Shutting down MESA-QA processes gracefully...")
-        await self.process_mgr.stop_all()
+        try:
+            await self.process_mgr.stop_all()
+        except Exception as e:
+            logger.warning("Error stopping processes during shutdown: %s", e)
+
+        # Save final reports
+        try:
+            state_dict = await self.controller_db.get_run_state(self.run_id) or {
+                "run_id": self.run_id,
+                "status": self.state_machine.current.value,
+            }
+            self.report_builder.generate_final_report(state_dict, self._bugs, self._repairs)
+        except Exception as e:
+            logger.warning("Error generating final report during shutdown: %s", e)
+
         if self._main_baseline is not None:
             self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
 
-        # Save final reports
-        state_dict = await self.controller_db.get_run_state(self.run_id) or {
-            "run_id": self.run_id,
-            "status": self.state_machine.current.value,
-        }
-        self.report_builder.generate_final_report(state_dict, self._bugs, self._repairs)
         logger.info("Shutdown complete.")

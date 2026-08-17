@@ -22,10 +22,16 @@ class FakeRunner:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", list(ActionKind))
 async def test_tester_prompt_is_rendered_without_formatting_json_braces(tmp_path, kind):
+    from mesa_qa.codex.tester import _EXPECTED_TOOL_BY_KIND
+
     prompts = Path(__file__).parents[2] / "prompts"
+    expected_tool = _EXPECTED_TOOL_BY_KIND.get(kind.value, "mesa_recall")
     result = CodexRunResult(
         returncode=0,
-        raw_stdout='{"action_id":"act-1","scenario_event_id":"evt-1","actual":{"answer":"ok"}}',
+        raw_stdout=(
+            f'{{"type":"tool_call","name":"{expected_tool}"}}\n'
+            '{"action_id":"act-1","scenario_event_id":"evt-1","actual":{"answer":"ok"}}'
+        ),
     )
     runner = FakeRunner(result)
     tester = TesterCodex(runner=runner, prompts_dir=prompts)
@@ -39,6 +45,7 @@ async def test_tester_prompt_is_rendered_without_formatting_json_braces(tmp_path
     assert '"action_id": "act-1"' in runner.prompt  # literal JSON contract survives
     assert "You are a QA test engineer" in runner.prompt
     assert runner.kwargs["mcp_gateway_url"] == "http://127.0.0.1:18765"
+    assert expected_tool in observation.tools_called
 
 
 @pytest.mark.asyncio
@@ -82,3 +89,145 @@ def test_multiline_fenced_observation_is_parsed(tmp_path):
     parsed = tester._parse_observation(output, "", "act-1", "evt-1")
     assert parsed is not None
     assert parsed.actual["operation_id"] == "op_123"
+
+
+@pytest.mark.asyncio
+async def test_stale_action_id_rejected(tmp_path):
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Codex returns stale action_id "act-stale" instead of expected "act-current"
+    result = CodexRunResult(
+        returncode=0,
+        raw_stdout='{"action_id":"act-stale","scenario_event_id":"evt-1","actual":{"answer":"ok"}}',
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-current", tmp_path)
+
+    assert obs.tester_assessment == "infra_error"
+    assert "action_id mismatch" in obs.reason
+    assert "act-current" in obs.reason
+    assert "act-stale" in obs.reason
+
+
+@pytest.mark.asyncio
+async def test_wrong_scenario_event_id_rejected(tmp_path):
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Codex returns wrong scenario_event_id "evt-wrong" instead of expected "evt-1"
+    result = CodexRunResult(
+        returncode=0,
+        raw_stdout='{"action_id":"act-1","scenario_event_id":"evt-wrong","actual":{"answer":"ok"}}',
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-1", tmp_path)
+
+    assert obs.tester_assessment == "infra_error"
+    assert "scenario_event_id mismatch" in obs.reason
+    assert "evt-1" in obs.reason
+    assert "evt-wrong" in obs.reason
+
+
+@pytest.mark.asyncio
+async def test_missing_identity_rejected(tmp_path):
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Codex returns output missing action_id or scenario_event_id
+    result = CodexRunResult(
+        returncode=0,
+        raw_stdout='{"actual":{"answer":"ok"},"tester_assessment":"pass"}',
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-1", tmp_path)
+
+    assert obs.tester_assessment == "infra_error"
+
+
+@pytest.mark.asyncio
+async def test_self_reported_mcp_tool_without_stream_event_rejected(tmp_path):
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Tester self-reports tools_called: ["mesa_recall"] in JSON, but no real tool call exists in the Codex stream
+    result = CodexRunResult(
+        returncode=0,
+        raw_stdout=(
+            '{"action_id":"act-1","scenario_event_id":"evt-1",'
+            '"tools_called":["mesa_recall"],"actual":{"answer":"FastAPI"},'
+            '"tester_assessment":"pass"}'
+        ),
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-1", tmp_path)
+
+    # Self-report is non-authoritative -> fails closed as infra_error
+    assert obs.tester_assessment == "infra_error"
+    assert "Expected MCP tool 'mesa_recall' was not independently observed" in obs.reason
+    assert obs.tools_called == []
+
+
+@pytest.mark.asyncio
+async def test_independently_observed_mcp_tool_accepted(tmp_path):
+    from mesa_qa.codex.schemas import CodexJSONEvent
+
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Codex stream has genuine tool_call event for mesa_recall
+    event_call = CodexJSONEvent(
+        type="item.created",
+        item={"type": "tool_call", "name": "mesa_recall"},
+    )
+    result = CodexRunResult(
+        returncode=0,
+        events=[event_call],
+        raw_stdout='{"action_id":"act-1","scenario_event_id":"evt-1","actual":{"answer":"FastAPI"},"tester_assessment":"pass"}',
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-1", tmp_path)
+
+    assert obs.tester_assessment == "pass"
+    assert "mesa_recall" in obs.tools_called
+
+
+@pytest.mark.asyncio
+async def test_mismatched_mcp_tool_invocation_rejected(tmp_path):
+    prompts = Path(__file__).parents[2] / "prompts"
+    # Event is RECALL (expected mesa_recall), but stream only called mesa_forget
+    result = CodexRunResult(
+        returncode=0,
+        raw_stdout=(
+            '{"type":"tool_call","name":"mesa_forget"}\n'
+            '{"action_id":"act-1","scenario_event_id":"evt-1","actual":{"answer":"FastAPI"},"tester_assessment":"pass"}'
+        ),
+    )
+    runner = FakeRunner(result)
+    tester = TesterCodex(runner=runner, prompts_dir=prompts)
+    event = ScenarioEvent(
+        id="evt-1", kind=ActionKind.RECALL, entity="project:atlas"
+    )
+
+    obs = await tester.execute_action(event, "act-1", tmp_path)
+
+    assert obs.tester_assessment == "infra_error"
+    assert "Expected MCP tool 'mesa_recall' was not independently observed" in obs.reason
+    assert "mesa_forget" in obs.tools_called
+
+

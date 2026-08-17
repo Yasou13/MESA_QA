@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mesa_qa.judge.recall_matcher import match_recall
 from mesa_qa.models import ScenarioEvent, TesterObservation, Verdict
 
 
@@ -35,18 +36,16 @@ class DeterministicJudge:
             observation.actual.get("answer")
             or observation.actual.get("raw_response", "")
         )
-        if event.expected is not None and str(event.expected).lower() in actual.lower():
-            return Verdict(
-                is_pass=True,
-                is_candidate_anomaly=False,
-                expected=event.expected,
-                actual=actual,
-            )
+        is_pass, category, reason = match_recall(
+            expected=event.expected,
+            actual_text=actual,
+            structured_actual=observation.actual,
+        )
         return Verdict(
-            is_pass=False,
-            is_candidate_anomaly=True,
-            category="RETRIEVAL_MISMATCH",
-            reason="Expected truth was not found",
+            is_pass=is_pass,
+            is_candidate_anomaly=not is_pass,
+            category=category,
+            reason=reason,
             expected=event.expected,
             actual=actual,
         )

@@ -1,0 +1,17 @@
+{
+  "task": "S041",
+  "title": "Generate evidence-derived final report",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_evidence_final_report.py",
+      "exit_code": 0,
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Enhanced ReportBuilder to derive session verdict (PASS/FAIL/BLOCKED/NOT_RUN) strictly from evidence and persisted run state.",
+    "Generates both final.json and final.md with executive summaries, candidate identity, defect breakdowns, safety invariant assertions, and discovered evidence artifacts."
+  ]
+}

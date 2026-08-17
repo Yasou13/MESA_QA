@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class MesaSettings(BaseModel):
@@ -16,12 +16,39 @@ class MesaSettings(BaseModel):
     model_enabled: bool = True
     external_provider_enabled: bool = True
     llm_provider: str = "mock"
+    validation_mode: Optional[int] = Field(default=0)
+    candidate_ref: Optional[str] = Field(default=None)
+
+    @field_validator("validation_mode", mode="before")
+    @classmethod
+    def validate_validation_mode(cls, v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str:
+                return None
+            if not (v_str.isdigit() or (v_str.startswith("-") and v_str[1:].isdigit())):
+                raise ValueError(
+                    f"validation_mode must be 0, 1, or 2; got '{v}'"
+                )
+            v = int(v_str)
+        elif isinstance(v, bool):
+            raise ValueError(
+                f"validation_mode must be an integer (0, 1, 2); got boolean {v}"
+            )
+        elif not isinstance(v, int):
+            raise ValueError(
+                f"validation_mode must be an integer (0, 1, 2); got {type(v).__name__}"
+            )
+        if v not in (0, 1, 2):
+            raise ValueError(f"validation_mode must be 0, 1, or 2; got {v}")
+        return v
 
 
 class CandidateSettings(BaseModel):
     worktree_root: Path = Field(default=Path("/home/yasin/Desktop/MESA-QA-candidate"))
     branch_prefix: str = "qa/autonomous"
-    reuse_existing: bool = False
 
 
 class RunSettings(BaseModel):
@@ -30,9 +57,6 @@ class RunSettings(BaseModel):
     seed: int = 42
     cadence_seconds_min: float = 45.0
     cadence_seconds_max: float = 120.0
-    epoch_actions: int = 25
-    restart_every_minutes: float = 90.0
-    parallel_actions: int = 1
 
 
 class CodexSettings(BaseModel):
@@ -42,6 +66,7 @@ class CodexSettings(BaseModel):
     tester_timeout_seconds: int = 300
     repair_timeout_seconds: int = 1200
     json_events: bool = True
+    auth_type: str = "local"
 
 
 class ApprovalSettings(BaseModel):
@@ -64,6 +89,7 @@ class VerificationSettings(BaseModel):
     targeted_tests_only_per_fix: bool = True
     full_suite_at_end: bool = True
     full_suite_every_n_repairs: int = 3
+    run_full_suite: bool = False
 
 
 class ResourcesSettings(BaseModel):
@@ -106,15 +132,18 @@ class QAConfig(BaseModel):
             with open(default_yaml, "r", encoding="utf-8") as f:
                 config_data = yaml.safe_load(f) or {}
 
-        # 2. Load profile yaml (lite/standard) if specified
+        # 2. Load profile yaml (lite/standard/stress-behavioral) if specified
         if profile:
             profile_yaml = (
                 Path(__file__).parent.parent.parent / "config" / f"{profile}.yaml"
             )
-            if profile_yaml.exists():
-                with open(profile_yaml, "r", encoding="utf-8") as f:
-                    pdata = yaml.safe_load(f) or {}
-                    _deep_merge(config_data, pdata)
+            if not profile_yaml.exists():
+                raise FileNotFoundError(
+                    f"Configuration profile '{profile}' not found at {profile_yaml}"
+                )
+            with open(profile_yaml, "r", encoding="utf-8") as f:
+                pdata = yaml.safe_load(f) or {}
+                _deep_merge(config_data, pdata)
 
         # 3. Load explicit config_path if passed
         if config_path and config_path.exists():

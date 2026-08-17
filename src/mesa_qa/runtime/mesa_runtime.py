@@ -26,6 +26,7 @@ class MesaCandidateRuntime:
         model_enabled: bool = True,
         external_provider_enabled: bool = True,
         llm_provider: str = "mock",
+        validation_mode: Optional[int] = 0,
         log_file: Optional[Path] = None,
     ):
         self.candidate_worktree = candidate_worktree.resolve()
@@ -38,6 +39,7 @@ class MesaCandidateRuntime:
         self.model_enabled = model_enabled
         self.external_provider_enabled = external_provider_enabled
         self.llm_provider = llm_provider
+        self.validation_mode = validation_mode
         self.log_file = log_file
         self._process: Optional[asyncio.subprocess.Process] = None
 
@@ -65,10 +67,6 @@ class MesaCandidateRuntime:
                 "true" if self.external_provider_enabled else "false"
             ),
             "MESA_LLM_PROVIDER": self.llm_provider,
-            "MESA_TIER3_LLM_PROVIDER_A": self.llm_provider,
-            "MESA_TIER3_LLM_MODEL_A": "mesa-qa-validator-a",
-            "MESA_TIER3_LLM_PROVIDER_B": self.llm_provider,
-            "MESA_TIER3_LLM_MODEL_B": "mesa-qa-validator-b",
             "MESA_EMBEDDING_DIMENSION": "384",
             "MESA_PORT": str(self.port),
             "MESA_API_KEY": self.api_key,
@@ -77,7 +75,21 @@ class MesaCandidateRuntime:
             "MESA_PRINCIPAL_STATUS": "active",
         }
 
-        log_out = open(self.log_file, "a") if self.log_file else subprocess.DEVNULL
+        if self.validation_mode is not None:
+            env["MESA_TIER3_MODE"] = str(self.validation_mode)
+            if self.validation_mode == 1:
+                env["MESA_TIER3_LLM_PROVIDER_A"] = self.llm_provider
+                env["MESA_TIER3_LLM_MODEL_A"] = "mesa-qa-validator-a"
+            elif self.validation_mode == 2:
+                env["MESA_TIER3_LLM_PROVIDER_A"] = self.llm_provider
+                env["MESA_TIER3_LLM_MODEL_A"] = "mesa-qa-validator-a"
+                env["MESA_TIER3_LLM_PROVIDER_B"] = self.llm_provider
+                env["MESA_TIER3_LLM_MODEL_B"] = "mesa-qa-validator-b"
+
+        log_handle = None
+        if self.log_file:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            log_handle = open(self.log_file, "a", encoding="utf-8")
 
         cmd = [str(self.python_bin), "-m", "mesa_memory.runtime_entrypoint"]
         logger.info(
@@ -86,13 +98,18 @@ class MesaCandidateRuntime:
             self.candidate_worktree,
         )
 
-        self._process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(self.candidate_worktree),
-            env=env,
-            stdout=log_out,
-            stderr=log_out,
-        )
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(self.candidate_worktree),
+                env=env,
+                stdout=log_handle if log_handle is not None else subprocess.DEVNULL,
+                stderr=log_handle if log_handle is not None else subprocess.DEVNULL,
+            )
+        finally:
+            if log_handle is not None:
+                log_handle.close()
+
         logger.info("MESA candidate process started with PID %d", self._process.pid)
 
     async def wait_until_ready(self, timeout_seconds: float = 45.0) -> bool:

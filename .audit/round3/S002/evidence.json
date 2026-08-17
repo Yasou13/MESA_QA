@@ -1,0 +1,35 @@
+{
+  "task": "S002",
+  "title": "Wire MESA-QA to official MESA validation mode",
+  "status": "PASS",
+  "configuration": {
+    "field": "mesa.validation_mode",
+    "supported_modes": [0, 1, 2],
+    "default": 0,
+    "env_var_propagated": "MESA_TIER3_MODE",
+    "lite_profile": {
+      "validation_mode": 0,
+      "external_provider_enabled": false,
+      "repair_enabled": false,
+      "parallel_actions": 1,
+      "cadence_seconds_min": 45.0,
+      "cadence_seconds_max": 120.0
+    }
+  },
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_config.py tests/unit/test_mesa_runtime_validation.py",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "MESA-QA now selects MESA's official validation mode through mesa.validation_mode without implementing its own shadow validator policy.",
+    "Mode 0 propagates MESA_TIER3_MODE='0' and disables LLM validator construction in candidate runtime.",
+    "Mode 1 propagates MESA_TIER3_MODE='1' with validator A.",
+    "Mode 2 propagates MESA_TIER3_MODE='2' with validators A and B.",
+    "Invalid validation mode inputs fail explicitly on validation.",
+    "Lite profile enforces Mode 0 and disables external paid providers."
+  ]
+}

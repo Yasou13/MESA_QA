@@ -20,6 +20,7 @@ class ControllerDB:
                     started_at TEXT NOT NULL,
                     planned_end_at TEXT,
                     baseline_main_head TEXT,
+                    candidate_base_sha TEXT,
                     candidate_branch TEXT,
                     candidate_head TEXT,
                     candidate_worktree TEXT,
@@ -102,14 +103,15 @@ class ControllerDB:
                 """
                 INSERT INTO run_state (
                     run_id, status, started_at, planned_end_at, baseline_main_head,
-                    candidate_branch, candidate_head, candidate_worktree, qa_storage_root,
-                current_epoch, action_count, confirmed_bug_count, verified_repair_count, last_updated_at
-                , scenario_cursor, scenario_seed, tester_thread_id, mesa_pid, mcp_gateway_pid
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
+                    candidate_base_sha, candidate_branch, candidate_head, candidate_worktree, qa_storage_root,
+                    current_epoch, action_count, confirmed_bug_count, verified_repair_count, last_updated_at,
+                    scenario_cursor, scenario_seed, tester_thread_id, mesa_pid, mcp_gateway_pid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     status=excluded.status,
                     planned_end_at=excluded.planned_end_at,
                     baseline_main_head=excluded.baseline_main_head,
+                    candidate_base_sha=excluded.candidate_base_sha,
                     candidate_branch=excluded.candidate_branch,
                     candidate_head=excluded.candidate_head,
                     candidate_worktree=excluded.candidate_worktree,
@@ -131,6 +133,7 @@ class ControllerDB:
                     state["started_at"],
                     state.get("planned_end_at"),
                     state.get("baseline_main_head"),
+                    state.get("candidate_base_sha"),
                     state.get("candidate_branch"),
                     state.get("candidate_head"),
                     state.get("candidate_worktree"),
@@ -174,6 +177,11 @@ class ControllerDB:
             ) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else None
+
+    async def clear_control(self, run_id: str) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM control_requests WHERE run_id = ?", (run_id,))
+            await db.commit()
 
     async def record_action(
         self,
@@ -250,3 +258,82 @@ class ControllerDB:
                 ),
             )
             await db.commit()
+
+    async def get_latest_action(self, run_id: str) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM action_log WHERE run_id = ? ORDER BY executed_at DESC, rowid DESC LIMIT 1",
+                (run_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    action = dict(row)
+                    action["request"] = json.loads(action.pop("request_json") or "{}")
+                    action["response"] = json.loads(action.pop("response_json") or "{}")
+                    return action
+                return None
+
+    async def list_bugs(self, run_id: str) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM bugs WHERE run_id = ? ORDER BY created_at",
+                (run_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        bugs: List[Dict[str, Any]] = []
+        for row in rows:
+            b = dict(row)
+            b["bug_data"] = json.loads(b.pop("bug_json") or "{}")
+            bugs.append(b)
+        return bugs
+
+    async def get_full_status(self, run_id: str) -> Optional[Dict[str, Any]]:
+        run_state = await self.get_run_state(run_id)
+        if not run_state:
+            return None
+        last_action = await self.get_latest_action(run_id)
+        control = await self.get_control(run_id)
+        bugs = await self.list_bugs(run_id)
+
+        blocker = None
+        if control:
+            blocker = f"Control requested: {control}"
+        elif run_state.get("status") == "PAUSED":
+            blocker = "Session paused by operator"
+        elif run_state.get("status") == "WAITING_FOR_CODEX":
+            blocker = "Waiting for human approval / Codex interaction"
+
+        return {
+            "run_id": run_id,
+            "status": run_state.get("status"),
+            "started_at": run_state.get("started_at"),
+            "last_updated_at": run_state.get("last_updated_at"),
+            "planned_end_at": run_state.get("planned_end_at"),
+            "candidate_identity": {
+                "worktree": run_state.get("candidate_worktree"),
+                "branch": run_state.get("candidate_branch"),
+                "base_sha": run_state.get("candidate_base_sha"),
+                "head": run_state.get("candidate_head"),
+                "baseline_main_head": run_state.get("baseline_main_head"),
+            },
+            "pids": {
+                "mesa_pid": run_state.get("mesa_pid"),
+                "mcp_gateway_pid": run_state.get("mcp_gateway_pid"),
+            },
+            "active_action": {
+                "current_epoch": run_state.get("current_epoch"),
+                "scenario_cursor": run_state.get("scenario_cursor"),
+                "action_count": run_state.get("action_count"),
+                "tester_thread_id": run_state.get("tester_thread_id"),
+            },
+            "last_action": last_action,
+            "blocker": blocker,
+            "bugs": {
+                "total": len(bugs),
+                "confirmed": run_state.get("confirmed_bug_count", 0),
+                "verified": run_state.get("verified_repair_count", 0),
+                "items": bugs,
+            },
+        }

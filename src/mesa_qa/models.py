@@ -22,6 +22,8 @@ class ActionKind(str, Enum):
 
 class ScenarioEvent(BaseModel):
     id: str
+    template_id: Optional[str] = None
+    epoch: int = 0
     kind: ActionKind
     entity: str
     field: Optional[str] = None
@@ -32,6 +34,7 @@ class ScenarioEvent(BaseModel):
     mode: str = "current"  # current, historical, forgotten
     expected: Optional[Any] = None
     idempotency_key: Optional[str] = None
+    idempotency_strategy: Optional[str] = None  # "fresh_attempt", "reuse_same_key"
     effective_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -69,6 +72,7 @@ class BugReport(BaseModel):
     severity: Severity = Severity.P1
     category: str
     scenario_id: str
+    reproduction_strategy: str = "fresh_attempt"
     preconditions: Dict[str, Any] = Field(default_factory=dict)
     steps: List[Dict[str, Any]] = Field(default_factory=list)
     expected: Dict[str, Any] = Field(default_factory=dict)

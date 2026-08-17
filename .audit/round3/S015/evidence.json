@@ -1,0 +1,18 @@
+{
+  "task": "S015",
+  "title": "Implement active-action emergency cancellation",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_emergency_cancellation.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "QAController tracks active event processing task via self._current_action_task.",
+    "stop() and cancel_active_action() cancel the running task cleanly, handle asyncio.CancelledError, and proceed to safe shutdown and state persistence.",
+    "CodexRunner spawns child processes with start_new_session=True and kills the full process group on cancellation or timeout."
+  ]
+}

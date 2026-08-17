@@ -1,0 +1,18 @@
+{
+  "task": "S031",
+  "title": "Enforce post-repair bounded diff",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_bounded_diff.py",
+      "exit_code": 0,
+      "passed": 5,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Enhanced RepairPolicyGuard to count all changed files and changed lines including untracked files (via git status --untracked-files=all and disk line counting).",
+    "Enforced forbidden path blocking for both tracked and untracked changes.",
+    "Integrated RepairPolicyGuard.validate_diff into QAController._execute_repair_pipeline as an authoritative pre-commit gate."
+  ]
+}

@@ -18,11 +18,15 @@ class RepairerCodex:
         prompts_dir: Path,
         python_bin: Path,
         timeout_seconds: int = 1200,
+        model: Optional[str] = None,
+        json_events: bool = True,
     ):
         self.runner = runner
         self.prompts_dir = prompts_dir.resolve()
         self.python_bin = Path(python_bin).absolute()
         self.timeout_seconds = timeout_seconds
+        self.model = model
+        self.json_events = json_events
 
     async def execute_repair(
         self,
@@ -44,6 +48,8 @@ class RepairerCodex:
             cwd=candidate_worktree,
             sandbox="workspace-write",
             timeout_seconds=self.timeout_seconds,
+            model=self.model,
+            json_events=self.json_events,
         )
 
         return self._parse_repair_result(res.output_text, res.raw_stdout, bug.bug_id)

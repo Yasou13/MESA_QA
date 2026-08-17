@@ -1,0 +1,31 @@
+name: conflict_and_resolution
+description: Tests contradictory statements and conflict resolution.
+events:
+  - id: evt_conf_01
+    kind: remember
+    entity: service:auth
+    field: port
+    value: 8080
+    text: "Auth service listens on port 8080."
+
+  - id: evt_conf_02
+    kind: recall
+    entity: service:auth
+    field: port
+    question: "What port does the auth service use?"
+    expected: 8080
+
+  - id: evt_conf_03
+    kind: conflict
+    entity: service:auth
+    field: port
+    old_value: 8080
+    value: 8443
+    text: "Port configuration update: Auth service port is changed to 8443."
+
+  - id: evt_conf_04
+    kind: recall
+    entity: service:auth
+    field: port
+    question: "What is the resolved port for auth service?"
+    expected: 8443

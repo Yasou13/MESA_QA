@@ -1,0 +1,17 @@
+{
+  "task": "S009",
+  "title": "Allow confirmed bug continuation when repair is disabled",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_confirmed_bug_continuation.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "StateMachine allows valid transition CONFIRMED_BUG -> RUNNING when autonomous repair is disabled or gated.",
+    "QAController properly completes the anomaly -> recheck -> reproduce -> confirmed bug flow, packages the evidence bundle, records the bug, and transitions back to RUNNING to continue scenario execution."
+  ]
+}

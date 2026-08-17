@@ -1,0 +1,18 @@
+{
+  "task": "S012",
+  "title": "Guarantee unique run IDs",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_unique_run_id.py",
+      "exit_code": 0,
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Implemented generate_run_id(prefix) generating formatted run IDs containing accurate UTC date/time (%Y%m%d-%H%M%S) and random UUID suffix.",
+    "Wired CLI run command to use generate_run_id('qa').",
+    "Enforced fail-closed behavior on collisions: QAController.initialize() fails closed (FileExistsError) on DB run_id collision, get_run_dir(fail_if_exists=True) fails closed on filesystem directory collision, and WorktreeManager.create_candidate_worktree fails closed if candidate worktree path or candidate branch already exists."
+  ]
+}

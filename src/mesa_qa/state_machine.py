@@ -30,7 +30,7 @@ class State(str, Enum):
 
 
 VALID_TRANSITIONS: Dict[State, Set[State]] = {
-    State.INIT: {State.PREFLIGHT, State.FAILED, State.STOPPING},
+    State.INIT: {State.PREFLIGHT, State.START_MESA, State.FAILED, State.STOPPING},
     State.PREFLIGHT: {State.CREATE_CANDIDATE, State.FAILED, State.STOPPING},
     State.CREATE_CANDIDATE: {State.START_MESA, State.FAILED, State.STOPPING},
     State.START_MESA: {State.START_MCP, State.FAILED, State.STOPPING},
@@ -47,7 +47,7 @@ VALID_TRANSITIONS: Dict[State, Set[State]] = {
     State.ANOMALY: {State.RECHECKING, State.RUNNING, State.STOPPING, State.FAILED},
     State.RECHECKING: {State.REPRODUCING, State.RUNNING, State.STOPPING, State.FAILED},
     State.REPRODUCING: {State.CONFIRMED_BUG, State.RUNNING, State.STOPPING, State.FAILED},
-    State.CONFIRMED_BUG: {State.REPAIRING, State.PAUSED, State.STOPPING, State.FAILED},
+    State.CONFIRMED_BUG: {State.REPAIRING, State.RUNNING, State.PAUSED, State.STOPPING, State.FAILED},
     State.REPAIRING: {State.VERIFYING, State.RUNNING, State.STOPPING, State.FAILED},
     State.VERIFYING: {State.RESTARTING, State.RUNNING, State.STOPPING, State.FAILED},
     State.RESTARTING: {State.LIVE_RECHECK, State.RUNNING, State.FAILED, State.STOPPING},

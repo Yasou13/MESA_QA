@@ -58,7 +58,10 @@ class MesaMCPGatewayProcess:
             "MESA_USE_V4": "true",
         }
 
-        log_out = open(self.log_file, "a") if self.log_file else subprocess.DEVNULL
+        log_handle = None
+        if self.log_file:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            log_handle = open(self.log_file, "a", encoding="utf-8")
 
         # Command to launch uvicorn with gateway app
         cmd = [
@@ -74,13 +77,18 @@ class MesaMCPGatewayProcess:
         ]
         logger.info("Launching MESA MCP Gateway: %s", " ".join(cmd))
 
-        self._process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(self.candidate_worktree),
-            env=env,
-            stdout=log_out,
-            stderr=log_out,
-        )
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(self.candidate_worktree),
+                env=env,
+                stdout=log_handle if log_handle is not None else subprocess.DEVNULL,
+                stderr=log_handle if log_handle is not None else subprocess.DEVNULL,
+            )
+        finally:
+            if log_handle is not None:
+                log_handle.close()
+
         logger.info("MESA MCP Gateway started with PID %d", self._process.pid)
 
     async def wait_until_ready(self, timeout_seconds: float = 30.0) -> bool:

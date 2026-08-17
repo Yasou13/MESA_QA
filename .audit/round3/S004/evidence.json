@@ -1,0 +1,18 @@
+{
+  "task": "S004",
+  "title": "Remove hard-coded candidate SHA assumptions",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_candidate_identity.py",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Removed baked-in candidate HEAD and SHA assumptions across controller, process manager, and reports.",
+    "Persisted state and live assertions dynamically derive candidate_base_sha and candidate_head from resolved git refs and worktree evidence.",
+    "Verified that distinct configured candidate_refs produce distinct resolved candidate identities without any code changes."
+  ]
+}

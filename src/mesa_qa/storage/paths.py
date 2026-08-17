@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -38,6 +40,13 @@ def get_user_qa_root() -> Path:
     return _canonical(qa_root)
 
 
+def generate_run_id(prefix: str = "qa") -> str:
+    """Generate a unique run ID containing date, time and random UUID suffix."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    suffix = uuid.uuid4().hex[:8]
+    return f"{prefix}-{timestamp}-{suffix}"
+
+
 def validate_run_id(run_id: str) -> str:
     if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError("Run ID must match [A-Za-z0-9._-]+ and contain no path separators")
@@ -46,7 +55,7 @@ def validate_run_id(run_id: str) -> str:
     return run_id
 
 
-def get_run_dir(run_id: str, base_dir: Path | None = None) -> Path:
+def get_run_dir(run_id: str, base_dir: Path | None = None, fail_if_exists: bool = False) -> Path:
     """Create and return a non-symlink QA run directory contained by its root."""
     validate_run_id(run_id)
     root = _canonical(base_dir) if base_dir is not None else get_user_qa_root()
@@ -56,6 +65,8 @@ def get_run_dir(run_id: str, base_dir: Path | None = None) -> Path:
     _reject_symlink(runs_root, "QA runs root")
     runs_root.mkdir(exist_ok=True, mode=0o700)
     run_path = runs_root / run_id
+    if fail_if_exists and run_path.exists():
+        raise FileExistsError(f"Run directory already exists for run_id '{run_id}': {run_path}")
     _reject_symlink(run_path, "QA run root")
     run_path.mkdir(exist_ok=True, mode=0o700)
     resolved_run = _canonical(run_path)
