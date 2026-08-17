@@ -91,6 +91,8 @@ class MCPBindingManager:
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.candidate_worktree)
+        env["VIRTUAL_ENV"] = str(self.python_bin.parent.parent)
+        env["PATH"] = f"{self.python_bin.parent}:{env.get('PATH', '')}"
 
         cmd = self._command("install", tester_workspace, client_id=client_id)
 

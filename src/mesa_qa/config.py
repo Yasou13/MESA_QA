@@ -53,6 +53,11 @@ class MesaSettings(StrictBaseModel):
 class CandidateSettings(StrictBaseModel):
     worktree_root: Path = Field(default=Path("/home/yasin/Desktop/MESA-QA-candidate"))
     branch_prefix: str = "qa/autonomous"
+    # This is a base interpreter, not a MESA checkout virtualenv.  The runtime
+    # environment itself is created under each QA run directory.
+    python_path: Optional[Path] = None
+    python_version: str = "3.12"
+    uv_binary: str = "uv"
 
 
 class RunSettings(StrictBaseModel):

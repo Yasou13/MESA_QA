@@ -234,6 +234,8 @@ class OfficialApprovalLifecycle:
     def _environment(self) -> dict[str, str]:
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.candidate_worktree)
+        env["VIRTUAL_ENV"] = str(self.mesa_cli.parent.parent)
+        env["PATH"] = f"{self.mesa_cli.parent}:{env.get('PATH', '')}"
         return env
 
     async def provision_operator(self) -> dict[str, Any]:

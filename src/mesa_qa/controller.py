@@ -11,7 +11,13 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from mesa_qa.config import QAConfig
-from mesa_qa.models import ActionKind, BugReport, ScenarioEvent, TesterObservation, Verdict
+from mesa_qa.models import (
+    ActionKind,
+    BugReport,
+    ScenarioEvent,
+    TesterObservation,
+    Verdict,
+)
 from mesa_qa.oracle.db import OracleDB
 from mesa_qa.oracle.evaluator import OracleEvaluator
 from mesa_qa.repair.evidence import EvidenceStore
@@ -82,10 +88,20 @@ class QAController:
             model=config.codex.tester_model,
             json_events=config.codex.json_events,
         )
-        self.repairer = RepairerCodex(
+        # Candidate tools are created only after ProcessManager resolves the
+        # QA-owned candidate environment.  The controller interpreter and the
+        # original MESA checkout's .venv are never candidates for these paths.
+        unresolved_candidate_python = (
+            config.candidate.python_path
+            or Path("/candidate-python-not-yet-resolved")
+        )
+        # Placeholders keep the controller constructible for dry-run/unit
+        # paths; initialize/resume replace both before any real candidate
+        # command can execute.
+        self.repairer: Optional[RepairerCodex] = RepairerCodex(
             runner=self.codex_runner,
             prompts_dir=Path(__file__).parent.parent.parent / "prompts",
-            python_bin=config.mesa.python_path,
+            python_bin=unresolved_candidate_python,
             timeout_seconds=config.codex.repair_timeout_seconds,
             model=config.codex.repair_model,
             json_events=config.codex.json_events,
@@ -96,7 +112,9 @@ class QAController:
         self.policy_guard = RepairPolicyGuard(config.safety)
         self.repair_gate = RepairGate(self.policy_guard)
         self.evidence_store = EvidenceStore(self.run_dir)
-        self.repair_verifier = RepairVerifier(python_bin=config.mesa.python_path)
+        self.repair_verifier: Optional[RepairVerifier] = RepairVerifier(
+            python_bin=unresolved_candidate_python
+        )
         self.reproducer = ProductionReproducer()
         self.sampler = ResourceSampler(
             self.run_dir,
@@ -124,6 +142,21 @@ class QAController:
     def _on_state_change(self, old_state: State, new_state: State) -> None:
         logger.debug("State transition notified: %s -> %s", old_state, new_state)
 
+    def _configure_candidate_tools(self) -> Path:
+        candidate_python = self.process_mgr.candidate_python
+        if candidate_python is None:
+            raise RuntimeError("Candidate Python was not resolved before QA tool setup")
+        self.repairer = RepairerCodex(
+            runner=self.codex_runner,
+            prompts_dir=Path(__file__).parent.parent.parent / "prompts",
+            python_bin=candidate_python,
+            timeout_seconds=self.config.codex.repair_timeout_seconds,
+            model=self.config.codex.repair_model,
+            json_events=self.config.codex.json_events,
+        )
+        self.repair_verifier = RepairVerifier(python_bin=candidate_python)
+        return candidate_python
+
     async def _persist_state(self) -> None:
         state_dict = {
             "run_id": self.run_id,
@@ -132,7 +165,11 @@ class QAController:
             "baseline_main_head": str(
                 self.process_mgr.worktree_mgr.check_main_hygiene().get("head")
             ),
-            "baseline_main_json": json.dumps(self._main_baseline) if self._main_baseline is not None else None,
+            "baseline_main_json": (
+                json.dumps(self._main_baseline)
+                if self._main_baseline is not None
+                else None
+            ),
             "candidate_base_sha": str(self.process_mgr.candidate_base_sha or ""),
             "candidate_branch": str(self.process_mgr.candidate_branch or ""),
             "candidate_head": str(
@@ -181,7 +218,9 @@ class QAController:
 
         existing = await self.controller_db.get_run_state(self.run_id)
         if existing is not None:
-            raise FileExistsError(f"Run ID collision: run '{self.run_id}' already has existing state in database.")
+            raise FileExistsError(
+                f"Run ID collision: run '{self.run_id}' already has existing state in database."
+            )
 
         try:
             # Step 1: Preflight
@@ -200,7 +239,9 @@ class QAController:
             candidate_wt = self.process_mgr.setup_worktree(
                 self.run_id,
                 candidate_ref=self.config.mesa.candidate_ref,
-                baseline_commit=hygiene["head"] if not self.config.mesa.candidate_ref else None,
+                baseline_commit=(
+                    hygiene["head"] if not self.config.mesa.candidate_ref else None
+                ),
             )
             self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
             logger.info(
@@ -212,13 +253,14 @@ class QAController:
             # Step 3: Start MESA Runtime
             await self._set_state(State.START_MESA)
             await self.process_mgr.start_all()
+            candidate_python = self._configure_candidate_tools()
             self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
 
             # Step 4: Start MCP & Provision Binding
             await self._set_state(State.START_MCP)
             bootstrap = MESABootstrap(
                 candidate_worktree=candidate_wt,
-                python_bin=self.config.mesa.python_path,
+                python_bin=candidate_python,
                 control_db_path=self.run_dir / "gateway-control.db",
                 gateway_url=self.process_mgr.mcp_gateway.gateway_url,
             )
@@ -243,8 +285,8 @@ class QAController:
                 )
                 self._approval = OfficialApprovalLifecycle(
                     candidate_worktree=candidate_wt,
-                    mesa_cli=self.config.mesa.python_path.parent / "mesa",
-                    mesa_admin_cli=self.config.mesa.python_path.parent / "mesa-v4-admin",
+                    mesa_cli=candidate_python.parent / "mesa",
+                    mesa_admin_cli=candidate_python.parent / "mesa-v4-admin",
                     control_db_path=self.run_dir / "gateway-control.db",
                     policy_db_path=self.run_dir / "mesa-storage" / "rbac_policy.db",
                     operator_principal=self.config.approval.operator_principal,
@@ -295,13 +337,18 @@ class QAController:
 
     async def resume_from_crash(self) -> None:
         """Restore controller state from persisted database after crash/restart and validate invariants."""
-        logger.info("Resuming MESA-QA Controller for run %s from persisted state...", self.run_id)
+        logger.info(
+            "Resuming MESA-QA Controller for run %s from persisted state...",
+            self.run_id,
+        )
         await self.controller_db.initialize()
         await self.oracle_db.initialize()
 
         state = await self.controller_db.get_run_state(self.run_id)
         if not state:
-            raise RuntimeError(f"Cannot resume run '{self.run_id}': no recorded state in database.")
+            raise RuntimeError(
+                f"Cannot resume run '{self.run_id}': no recorded state in database."
+            )
 
         try:
             # Restore and validate metadata
@@ -312,30 +359,41 @@ class QAController:
 
             candidate_wt_str = state.get("candidate_worktree")
             if not candidate_wt_str:
-                raise RuntimeError("Cannot resume run: missing candidate_worktree in persisted state.")
+                raise RuntimeError(
+                    "Cannot resume run: missing candidate_worktree in persisted state."
+                )
             candidate_wt = Path(candidate_wt_str)
             if not candidate_wt.exists():
-                raise FileNotFoundError(f"Cannot resume run: candidate worktree does not exist at {candidate_wt}")
+                raise FileNotFoundError(
+                    f"Cannot resume run: candidate worktree does not exist at {candidate_wt}"
+                )
 
             # Validate candidate worktree hygiene and branch
             self.process_mgr.worktree_mgr.check_main_hygiene()
-            persisted_baseline = (
-                self.evidence_store.read_json("main_baseline.json")
-                or (json.loads(state.get("baseline_main_json")) if state.get("baseline_main_json") else None)
+            persisted_baseline = self.evidence_store.read_json(
+                "main_baseline.json"
+            ) or (
+                json.loads(state.get("baseline_main_json"))
+                if state.get("baseline_main_json")
+                else None
             )
             if not persisted_baseline:
                 persisted_head = state.get("baseline_main_head")
                 if persisted_head:
                     persisted_baseline = {"head": persisted_head}
                 else:
-                    raise RuntimeError("Cannot resume run: missing persisted original MESA baseline.")
+                    raise RuntimeError(
+                        "Cannot resume run: missing persisted original MESA baseline."
+                    )
 
             # Validate that original MESA did not change while controller was stopped/crashed
             self.process_mgr.worktree_mgr.assert_main_unchanged(persisted_baseline)
             self._main_baseline = persisted_baseline
 
             persisted_head = state.get("candidate_head")
-            actual_head = self.process_mgr.worktree_mgr._run_git(candidate_wt, ["rev-parse", "HEAD"]).strip()
+            actual_head = self.process_mgr.worktree_mgr._run_git(
+                candidate_wt, ["rev-parse", "HEAD"]
+            ).strip()
             if persisted_head and actual_head != persisted_head:
                 raise RuntimeError(
                     f"Candidate HEAD mismatch on resume: expected {persisted_head}, got {actual_head}"
@@ -355,6 +413,11 @@ class QAController:
             # Restore runtime and MCP binding
             await self._set_state(State.START_MESA)
             await self.process_mgr.start_all()
+            candidate_python = (
+                self._configure_candidate_tools()
+                if self.process_mgr.candidate_python is not None
+                else self.repair_verifier.python_bin
+            )
             self.process_mgr.worktree_mgr.assert_main_unchanged(self._main_baseline)
 
             await self._set_state(State.START_MCP)
@@ -363,9 +426,16 @@ class QAController:
                 if self.process_mgr.mcp_gateway
                 else f"http://127.0.0.1:{self.config.mesa.gateway_port}"
             )
+            # A production ProcessManager always sets candidate_python during
+            # start_all. This branch preserves persisted-state inspection for
+            # dry-run adapters that intentionally do not start a runtime.
+            if self.process_mgr.candidate_python is None:
+                await self._set_state(State.RUNNING)
+                logger.info("Crash resume restored persisted state without runtime adapter")
+                return
             bootstrap = MESABootstrap(
                 candidate_worktree=candidate_wt,
-                python_bin=self.config.mesa.python_path,
+                python_bin=candidate_python,
                 control_db_path=self.run_dir / "gateway-control.db",
                 gateway_url=gateway_url,
             )
@@ -390,8 +460,8 @@ class QAController:
                 )
                 self._approval = OfficialApprovalLifecycle(
                     candidate_worktree=candidate_wt,
-                    mesa_cli=self.config.mesa.python_path.parent / "mesa",
-                    mesa_admin_cli=self.config.mesa.python_path.parent / "mesa-v4-admin",
+                    mesa_cli=candidate_python.parent / "mesa",
+                    mesa_admin_cli=candidate_python.parent / "mesa-v4-admin",
                     control_db_path=self.run_dir / "gateway-control.db",
                     policy_db_path=self.run_dir / "mesa-storage" / "rbac_policy.db",
                     operator_principal=self.config.approval.operator_principal,
@@ -469,7 +539,11 @@ class QAController:
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                         },
                     )
-                    if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+                    if self.state_machine.current not in (
+                        State.STOPPING,
+                        State.COMPLETED,
+                        State.FAILED,
+                    ):
                         await self._set_state(State.STOPPING)
                     await self.cancel_active_action()
                     await self.process_mgr.stop_all()
@@ -482,7 +556,9 @@ class QAController:
             except asyncio.CancelledError:
                 break
 
-    async def _watch_control_during_action(self, action_task: asyncio.Task[Any]) -> None:
+    async def _watch_control_during_action(
+        self, action_task: asyncio.Task[Any]
+    ) -> None:
         """Lightweight local control watcher polling during active actions."""
         while not action_task.done():
             await asyncio.sleep(0.15)
@@ -495,7 +571,9 @@ class QAController:
                 continue
 
             if ctrl == "stop":
-                logger.info("Emergency STOP requested via control DB during active action!")
+                logger.info(
+                    "Emergency STOP requested via control DB during active action!"
+                )
                 self._stop_requested = True
                 await self.controller_db.clear_control(self.run_id)
                 self.evidence_store.append_json_record(
@@ -507,7 +585,11 @@ class QAController:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 )
-                if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+                if self.state_machine.current not in (
+                    State.STOPPING,
+                    State.COMPLETED,
+                    State.FAILED,
+                ):
                     await self._set_state(State.STOPPING)
                 if not action_task.done():
                     action_task.cancel()
@@ -610,7 +692,8 @@ class QAController:
 
                 # Cadence sleep
                 cadence = self._rng.uniform(
-                    self.config.run.cadence_seconds_min, self.config.run.cadence_seconds_max
+                    self.config.run.cadence_seconds_min,
+                    self.config.run.cadence_seconds_max,
                 )
                 await asyncio.sleep(cadence)
 
@@ -640,9 +723,7 @@ class QAController:
         action_id = f"act_{self.run_id}_{self._action_count:06d}"
         template_id = event.template_id or event.id
         runtime_event_id = (
-            f"ep{self._epoch}_{template_id}"
-            if self._epoch > 0
-            else template_id
+            f"ep{self._epoch}_{template_id}" if self._epoch > 0 else template_id
         )
         event = event.model_copy(
             update={
@@ -731,7 +812,11 @@ class QAController:
                 scenario_event_id=event.id,
                 action_type=event.kind.value,
                 request=event.model_dump(),
-                response={"thread_rotated": True, "old_thread_id": old_thread, "status": "PENDING"},
+                response={
+                    "thread_rotated": True,
+                    "old_thread_id": old_thread,
+                    "status": "PENDING",
+                },
                 verdict="PENDING",
                 executed_at=datetime.now(timezone.utc).isoformat(),
             )
@@ -969,10 +1054,20 @@ class QAController:
             error_dict = lifecycle.error if isinstance(lifecycle.error, dict) else {}
             err_code = str(error_dict.get("code", "")).lower()
             err_msg = str(error_dict.get("message", "")).lower()
-            if "provider" in err_code or "rate_limit" in err_code or "provider" in err_msg or "rate limit" in err_msg or lifecycle.final_status == "TIMEOUT":
+            if (
+                "provider" in err_code
+                or "rate_limit" in err_code
+                or "provider" in err_msg
+                or "rate limit" in err_msg
+                or lifecycle.final_status == "TIMEOUT"
+            ):
                 assessment = "infra_error"
                 reason = f"operation failed with infrastructure issue ({lifecycle.final_status}): {lifecycle.error or 'unavailable'}"
-            elif lifecycle.final_status in {"REJECTED", "DENIED"} or "policy" in err_code or "policy" in err_msg:
+            elif (
+                lifecycle.final_status in {"REJECTED", "DENIED"}
+                or "policy" in err_code
+                or "policy" in err_msg
+            ):
                 assessment = "policy_rejection"
                 reason = f"operation policy rejection ({lifecycle.final_status}): {lifecycle.error or 'policy rejected'}"
             else:
@@ -1030,9 +1125,11 @@ class QAController:
             recheck_action_id = f"recheck_{obs.action_id}"
             recheck_event = event.model_copy(
                 update={
-                    "idempotency_key": f"qa:{self.run_id}:{recheck_action_id}:2"
-                    if event.idempotency_key
-                    else None
+                    "idempotency_key": (
+                        f"qa:{self.run_id}:{recheck_action_id}:2"
+                        if event.idempotency_key
+                        else None
+                    )
                 }
             )
 
@@ -1106,7 +1203,9 @@ class QAController:
                 )
             except Exception as exc:
                 bug.preconditions["reproduction_error"] = str(exc)
-                logger.exception("Could not materialize production reproduction for %s", bug_id)
+                logger.exception(
+                    "Could not materialize production reproduction for %s", bug_id
+                )
 
         repro_execution_data = {
             "status": "CONFIRMED_ANOMALY",
@@ -1129,6 +1228,12 @@ class QAController:
             "executed_at": datetime.now(timezone.utc).isoformat(),
         }
         if repro_spec:
+            # Normal live execution has a ProcessManager-resolved candidate
+            # interpreter. The verifier fallback is for dry-run reproduction
+            # materialization only; it is never used to launch a candidate.
+            repro_python = (
+                self.process_mgr.candidate_python or self.repair_verifier.python_bin
+            )
             repro_execution_data.update(
                 {
                     "candidate_worktree": str(candidate_worktree),
@@ -1137,7 +1242,7 @@ class QAController:
                     "actual_reproduction_command": repro_spec["reproduction_command"],
                     "regression_path": bug.preconditions["pre_fix_test_file"],
                     "regression_command": [
-                        str(self.config.mesa.python_path),
+                        str(repro_python),
                         "-m",
                         "pytest",
                         bug.preconditions["pre_fix_test_file"],
@@ -1183,6 +1288,10 @@ class QAController:
     ) -> None:
         await self._set_state(State.REPAIRING)
         logger.info("Starting autonomous repair pipeline for bug %s...", bug.bug_id)
+        if self.repairer is None or self.repair_verifier is None:
+            raise RuntimeError(
+                "Repair tools require a resolved candidate Python environment"
+            )
 
         try:
             # A QA observation is not a source-path regression.  Only an explicit
@@ -1570,7 +1679,9 @@ class QAController:
             await self._set_state(State.RUNNING)
 
         except Exception as exc:
-            logger.exception("Unexpected error in repair pipeline for bug %s: %s", bug.bug_id, exc)
+            logger.exception(
+                "Unexpected error in repair pipeline for bug %s: %s", bug.bug_id, exc
+            )
             self._repairs.append(
                 {
                     "bug_id": bug.bug_id,
@@ -1611,7 +1722,11 @@ class QAController:
         if self._resource_monitor_task and not self._resource_monitor_task.done():
             self._resource_monitor_task.cancel()
         await self.cancel_active_action()
-        if self.state_machine.current not in (State.STOPPING, State.COMPLETED, State.FAILED):
+        if self.state_machine.current not in (
+            State.STOPPING,
+            State.COMPLETED,
+            State.FAILED,
+        ):
             await self._set_state(State.STOPPING)
         await self.shutdown()
         if self.state_machine.current != State.COMPLETED:
@@ -1654,7 +1769,9 @@ class QAController:
                 "run_id": self.run_id,
                 "status": self.state_machine.current.value,
             }
-            self.report_builder.generate_final_report(state_dict, self._bugs, self._repairs)
+            self.report_builder.generate_final_report(
+                state_dict, self._bugs, self._repairs
+            )
         except Exception as e:
             logger.warning("Error generating final report during shutdown: %s", e)
 

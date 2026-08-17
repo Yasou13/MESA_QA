@@ -9,46 +9,35 @@ import shutil
 import socket
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from mesa_qa import __version__
 from mesa_qa.config import QAConfig
 from mesa_qa.controller import QAController
+from mesa_qa.runtime.candidate_environment import (
+    CandidateEnvironmentError,
+    CandidateEnvironmentManager,
+    python_version,
+)
 from mesa_qa.runtime.worktree import WorktreeManager
 from mesa_qa.storage.controller_db import ControllerDB
 from mesa_qa.storage.paths import (
     assert_safe_paths,
     discover_normal_mesa_storage,
     generate_run_id,
-    get_run_dir,
     get_user_qa_root,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger("mesa_qa.cli")
-
-_SUPPORTED_PYTHON_MIN = (3, 10)
-_SUPPORTED_PYTHON_MAX_EXCLUSIVE = (3, 13)
 
 
 def _supported_python_version(python_bin: Path) -> tuple[bool, str]:
-    """Return whether the selected MESA runtime is supported by MESA-QA."""
-    probe = subprocess.run(
-        [str(python_bin), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    version = probe.stdout.strip()
-    try:
-        major, minor, _patch = (int(part) for part in version.split(".", 2))
-    except ValueError:
-        return False, "could not determine Python version"
-    supported = _SUPPORTED_PYTHON_MIN <= (major, minor) < _SUPPORTED_PYTHON_MAX_EXCLUSIVE
-    return supported, version
+    """Compatibility wrapper retained for callers of the doctor helper."""
+    return python_version(python_bin)
 
 
 def run_doctor_checks(
@@ -56,7 +45,7 @@ def run_doctor_checks(
     mesa_repo: Optional[Path] = None,
 ) -> Tuple[bool, List[str], List[str]]:
     """Run comprehensive system and contract preconditions checks for MESA-QA.
-    
+
     Returns (success, passed_checks, issues).
     """
     passes: List[str] = []
@@ -77,62 +66,62 @@ def run_doctor_checks(
     if not shutil.which("git"):
         issues.append("Git CLI executable not found in PATH")
     else:
-        git_ver = subprocess.run(["git", "--version"], capture_output=True, text=True, check=False)
+        git_ver = subprocess.run(
+            ["git", "--version"], capture_output=True, text=True, check=False
+        )
         if git_ver.returncode == 0:
             passes.append(f"Git CLI available ({git_ver.stdout.strip()})")
         else:
             issues.append("Git CLI failed execution check")
 
-    # 3. Python Virtualenv & MESA Entrypoints
-    python_bin = cfg.mesa.python_path if cfg.mesa.repo_path.resolve() == repo else repo / ".venv" / "bin" / "python"
-    if not python_bin.exists():
-        issues.append(f"MESA Python virtual environment missing: {python_bin}")
-    else:
-        python_supported, python_version = _supported_python_version(python_bin)
-        if not python_supported:
+    # 3. Controller and candidate runtime interpreters. The controller may use
+    # any Python accepted by MESA-QA itself; candidate services must use a
+    # separate explicitly resolved interpreter in the strict supported range.
+    controller_python = Path(sys.executable).resolve()
+    controller_supported, controller_version = _supported_python_version(
+        controller_python
+    )
+    controller_status = (
+        "supported" if controller_supported else "outside candidate range"
+    )
+    passes.append(
+        f"Controller Python {controller_version} at {controller_python} ({controller_status})"
+    )
+    passes.append("Candidate Python supported range is >=3.10,<3.13")
+
+    candidate_manager = CandidateEnvironmentManager(
+        cfg.candidate, get_user_qa_root() / "runs" / "doctor"
+    )
+    try:
+        candidate_base_python = candidate_manager.validate_bootstrap_prerequisites(repo)
+        candidate_supported, candidate_version = _supported_python_version(
+            candidate_base_python
+        )
+        if not candidate_supported:
             issues.append(
-                "Unsupported MESA Python runtime "
-                f"{python_version}; MESA-QA requires Python >=3.10,<3.13 because "
-                "aiosqlite connection workers hang under the observed Python 3.13 stack"
+                "Unsupported candidate Python runtime "
+                f"{candidate_version}; MESA-QA requires Python >=3.10,<3.13. "
+                "Candidate startup is blocked before migrations."
             )
         else:
-            passes.append(f"MESA Python runtime {python_version} is supported")
-        probe = subprocess.run(
-            [str(python_bin), "-c", "import mesa_memory.runtime_entrypoint, mesa_mcp.gateway.app"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
+            passes.append(
+                f"Candidate base Python {candidate_version} resolved at {candidate_base_python}"
+            )
+        passes.append(
+            "Candidate environment bootstrap prerequisites ready "
+            "(MESA uv.lock + uv sync --locked --active --extra dev)"
         )
-        if probe.returncode != 0:
-            issues.append(f"MESA runtime/gateway import failed: {probe.stderr.strip()[-300:]}")
-        else:
-            passes.append("MESA runtime and MCP gateway module imports verified")
-
-        mesa_cli = python_bin.parent / "mesa"
-        if not mesa_cli.is_file():
-            issues.append(f"MESA supported console lifecycle missing: {mesa_cli}")
-        else:
-            passes.append(f"MESA console lifecycle CLI verified at {mesa_cli}")
-
-        probe_pytest = subprocess.run(
-            [str(python_bin), "-m", "pytest", "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if probe_pytest.returncode != 0:
-            issues.append(f"pytest is missing in MESA Python environment: {probe_pytest.stderr.strip()}")
-        else:
-            passes.append(f"pytest available in MESA environment ({probe_pytest.stdout.strip()})")
+    except CandidateEnvironmentError as exc:
+        issues.append(f"Candidate environment is not ready: {exc}")
 
     # 4. Codex CLI
     codex_bin = cfg.codex.binary
     if not shutil.which(codex_bin):
         issues.append(f"Codex CLI executable '{codex_bin}' not found in PATH")
     else:
-        res = subprocess.run([codex_bin, "--version"], capture_output=True, text=True, check=False)
+        res = subprocess.run(
+            [codex_bin, "--version"], capture_output=True, text=True, check=False
+        )
         if res.returncode == 0:
             passes.append(f"Codex CLI available ({res.stdout.strip()})")
         else:
@@ -141,13 +130,19 @@ def run_doctor_checks(
     # 5. Candidate Ref Pinning Check
     if repo.exists() and (repo / ".git").exists():
         try:
-            wt_mgr = WorktreeManager(repo, cfg.candidate.worktree_root, cfg.candidate.branch_prefix)
+            wt_mgr = WorktreeManager(
+                repo, cfg.candidate.worktree_root, cfg.candidate.branch_prefix
+            )
             if cfg.mesa.candidate_ref:
                 resolved_sha = wt_mgr.resolve_ref(cfg.mesa.candidate_ref)
-                passes.append(f"Pinned candidate ref '{cfg.mesa.candidate_ref}' resolved to SHA {resolved_sha}")
+                passes.append(
+                    f"Pinned candidate ref '{cfg.mesa.candidate_ref}' resolved to SHA {resolved_sha}"
+                )
             else:
                 hygiene = wt_mgr.check_main_hygiene()
-                passes.append(f"Default candidate ref HEAD resolved to {hygiene['head']}")
+                passes.append(
+                    f"Default candidate ref HEAD resolved to {hygiene['head']}"
+                )
         except Exception as exc:
             issues.append(f"Candidate ref resolution failed: {exc}")
 
@@ -156,7 +151,9 @@ def run_doctor_checks(
         if cfg.candidate.worktree_root.resolve() == repo.resolve():
             issues.append("Candidate root cannot equal MESA main checkout directory")
         else:
-            normal_storage = cfg.mesa.normal_storage_root or discover_normal_mesa_storage(repo)
+            normal_storage = (
+                cfg.mesa.normal_storage_root or discover_normal_mesa_storage(repo)
+            )
             doctor_cand = cfg.candidate.worktree_root / "doctor-candidate"
             doctor_qa_storage = get_user_qa_root() / "runs" / "doctor" / "mesa-storage"
             assert_safe_paths(
@@ -179,12 +176,17 @@ def run_doctor_checks(
     # 8. MESA Validation Mode Support Check
     val_mode = cfg.mesa.validation_mode
     if val_mode in (0, 1, 2):
-        passes.append(f"MESA validation mode {val_mode} verified (0=NORMAL, 1=FAST, 2=EXTREME)")
+        passes.append(
+            f"MESA validation mode {val_mode} verified (0=NORMAL, 1=FAST, 2=EXTREME)"
+        )
     else:
         issues.append(f"Unsupported MESA validation mode: {val_mode}")
 
     # 9. Port Availability Check
-    for label, port in (("MESA", cfg.mesa.port), ("MCP gateway", cfg.mesa.gateway_port)):
+    for label, port in (
+        ("MESA", cfg.mesa.port),
+        ("MCP gateway", cfg.mesa.gateway_port),
+    ):
         probe_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             probe_socket.bind(("127.0.0.1", port))
@@ -238,7 +240,9 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     if args.mesa_repo:
         cfg.mesa.repo_path = args.mesa_repo.resolve()
 
-    duration_desc = f"{args.minutes} minutes" if args.minutes is not None else f"{args.hours} hours"
+    duration_desc = (
+        f"{args.minutes} minutes" if args.minutes is not None else f"{args.hours} hours"
+    )
     if args.resume:
         run_id = args.resume
         print(f"Resuming MESA-QA Run {run_id}...")
@@ -246,7 +250,9 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         await ctrl.resume_from_crash()
     else:
         run_id = generate_run_id("qa")
-        print(f"Starting MESA-QA Run {run_id} (profile: {args.profile}, duration: {duration_desc})...")
+        print(
+            f"Starting MESA-QA Run {run_id} (profile: {args.profile}, duration: {duration_desc})..."
+        )
         ctrl = QAController(config=cfg, run_id=run_id)
         await ctrl.initialize()
 
@@ -282,38 +288,46 @@ def _format_status_report(status_data: Dict[str, Any]) -> str:
     ]
     last_act = status_data.get("last_action")
     if last_act:
-        lines.extend([
-            f"Action ID:            {last_act.get('action_id')}",
-            f"Scenario Event:       {last_act.get('scenario_event_id')}",
-            f"Type:                 {last_act.get('action_type')}",
-            f"Verdict:              {last_act.get('verdict')}",
-            f"Executed At:          {last_act.get('executed_at')}",
-        ])
+        lines.extend(
+            [
+                f"Action ID:            {last_act.get('action_id')}",
+                f"Scenario Event:       {last_act.get('scenario_event_id')}",
+                f"Type:                 {last_act.get('action_type')}",
+                f"Verdict:              {last_act.get('verdict')}",
+                f"Executed At:          {last_act.get('executed_at')}",
+            ]
+        )
     else:
         lines.append("No actions recorded yet.")
 
-    lines.extend([
-        "",
-        "--- Blocker / Control ---",
-        f"Blocker:              {status_data.get('blocker') or 'None'}",
-        "",
-        "--- Bugs & Repairs ---",
-        f"Total Bugs Logged:    {status_data.get('bugs', {}).get('total', 0)}",
-        f"Confirmed Bugs:       {status_data.get('bugs', {}).get('confirmed', 0)}",
-        f"Verified Repairs:     {status_data.get('bugs', {}).get('verified', 0)}",
-    ])
+    lines.extend(
+        [
+            "",
+            "--- Blocker / Control ---",
+            f"Blocker:              {status_data.get('blocker') or 'None'}",
+            "",
+            "--- Bugs & Repairs ---",
+            f"Total Bugs Logged:    {status_data.get('bugs', {}).get('total', 0)}",
+            f"Confirmed Bugs:       {status_data.get('bugs', {}).get('confirmed', 0)}",
+            f"Verified Repairs:     {status_data.get('bugs', {}).get('verified', 0)}",
+        ]
+    )
     return "\n".join(lines)
 
 
 async def _cmd_status(args: argparse.Namespace) -> None:
     qa_root = get_user_qa_root()
     runs_dir = qa_root / "runs"
-    
+
     target_run_id = args.run_id
     if not target_run_id:
         if runs_dir.exists():
             candidates = sorted(
-                (p for p in runs_dir.iterdir() if p.is_dir() and (p / "controller.db").exists()),
+                (
+                    p
+                    for p in runs_dir.iterdir()
+                    if p.is_dir() and (p / "controller.db").exists()
+                ),
                 key=lambda p: p.stat().st_mtime,
             )
             if candidates:
@@ -349,7 +363,9 @@ async def _cmd_control(action: str, run_id: Optional[str] = None) -> None:
     if run_id:
         target_dir = runs / run_id
         if not target_dir.exists() or not (target_dir / "controller.db").exists():
-            raise SystemExit(f"No run found with ID '{run_id}' or missing controller.db.")
+            raise SystemExit(
+                f"No run found with ID '{run_id}' or missing controller.db."
+            )
         db = ControllerDB(target_dir / "controller.db")
         await db.initialize()
         await db.request_control(run_id, action)
@@ -358,7 +374,11 @@ async def _cmd_control(action: str, run_id: Optional[str] = None) -> None:
 
     candidates = (
         sorted(
-            (path for path in runs.iterdir() if path.is_dir() and (path / "controller.db").exists()),
+            (
+                path
+                for path in runs.iterdir()
+                if path.is_dir() and (path / "controller.db").exists()
+            ),
             key=lambda path: path.stat().st_mtime,
         )
         if runs.exists()
@@ -409,7 +429,11 @@ async def _safe_kill_pids(pids: List[int]) -> None:
 
 
 async def _async_cmd_teardown(args: argparse.Namespace) -> None:
-    cfg = QAConfig.load(config_path=args.config) if getattr(args, "config", None) else QAConfig.load()
+    cfg = (
+        QAConfig.load(config_path=args.config)
+        if getattr(args, "config", None)
+        else QAConfig.load()
+    )
     if getattr(args, "mesa_repo", None):
         cfg.mesa.repo_path = args.mesa_repo.resolve()
 
@@ -418,11 +442,19 @@ async def _async_cmd_teardown(args: argparse.Namespace) -> None:
     main_repo = cfg.mesa.repo_path.resolve()
     candidate_root = cfg.candidate.worktree_root.resolve()
 
-    wt_mgr = WorktreeManager(main_repo=main_repo, candidate_root=candidate_root, branch_prefix=cfg.candidate.branch_prefix)
+    wt_mgr = WorktreeManager(
+        main_repo=main_repo,
+        candidate_root=candidate_root,
+        branch_prefix=cfg.candidate.branch_prefix,
+    )
 
     run_ids = [args.run_id] if args.run_id else []
     if not run_ids and runs_dir.exists():
-        run_ids = [d.name for d in runs_dir.iterdir() if d.is_dir() and (d / "controller.db").exists()]
+        run_ids = [
+            d.name
+            for d in runs_dir.iterdir()
+            if d.is_dir() and (d / "controller.db").exists()
+        ]
 
     print(f"Executing safe teardown for {len(run_ids)} run(s)...")
 
@@ -456,7 +488,9 @@ async def _async_cmd_teardown(args: argparse.Namespace) -> None:
         ]
         if status_data and status_data.get("candidate_identity", {}).get("worktree"):
             try:
-                possible_wt_paths.append(Path(status_data["candidate_identity"]["worktree"]))
+                possible_wt_paths.append(
+                    Path(status_data["candidate_identity"]["worktree"])
+                )
             except Exception:
                 pass
 
@@ -464,7 +498,9 @@ async def _async_cmd_teardown(args: argparse.Namespace) -> None:
             if cand_wt.exists():
                 try:
                     branch_name = f"{cfg.candidate.branch_prefix}-{rid}"
-                    wt_mgr.remove_candidate_worktree(cand_wt, delete_branch=True, branch_name=branch_name)
+                    wt_mgr.remove_candidate_worktree(
+                        cand_wt, delete_branch=True, branch_name=branch_name
+                    )
                     print(f"Removed candidate worktree: {cand_wt}")
                 except Exception as exc:
                     logger.warning("Could not remove worktree %s: %s", cand_wt, exc)
@@ -484,7 +520,12 @@ async def _async_cmd_teardown(args: argparse.Namespace) -> None:
 
     # Prune git worktrees on main repo
     try:
-        subprocess.run(["git", "worktree", "prune"], cwd=main_repo, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "worktree", "prune"],
+            cwd=main_repo,
+            capture_output=True,
+            check=False,
+        )
     except Exception:
         pass
 
@@ -498,31 +539,60 @@ def _cmd_teardown(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="mesa-qa", description="MESA-QA Autonomous Resident Test Engineer")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser = argparse.ArgumentParser(
+        prog="mesa-qa", description="MESA-QA Autonomous Resident Test Engineer"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # doctor
-    doctor_p = subparsers.add_parser("doctor", help="Check system dependencies, paths and safety preconditions")
-    doctor_p.add_argument("--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA"))
+    doctor_p = subparsers.add_parser(
+        "doctor", help="Check system dependencies, paths and safety preconditions"
+    )
+    doctor_p.add_argument(
+        "--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA")
+    )
     doctor_p.add_argument("--config", type=Path, default=None)
 
     # init
-    init_p = subparsers.add_parser("init", help="Initialize MESA-QA run directories and worktree")
-    init_p.add_argument("--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA"))
-    init_p.add_argument("--candidate-root", type=Path, default=Path("/home/yasin/Desktop/MESA-QA-candidate"))
+    init_p = subparsers.add_parser(
+        "init", help="Initialize MESA-QA run directories and worktree"
+    )
+    init_p.add_argument(
+        "--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA")
+    )
+    init_p.add_argument(
+        "--candidate-root",
+        type=Path,
+        default=Path("/home/yasin/Desktop/MESA-QA-candidate"),
+    )
 
     # run
     run_p = subparsers.add_parser("run", help="Run the autonomous endurance session")
     run_p.add_argument("--hours", type=float, default=8.0)
-    run_p.add_argument("--minutes", type=float, default=None, help="Duration in minutes (overrides --hours)")
-    run_p.add_argument("--profile", choices=["lite", "standard", "stress-behavioral"], default="lite")
-    run_p.add_argument("--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA"))
+    run_p.add_argument(
+        "--minutes",
+        type=float,
+        default=None,
+        help="Duration in minutes (overrides --hours)",
+    )
+    run_p.add_argument(
+        "--profile", choices=["lite", "standard", "stress-behavioral"], default="lite"
+    )
+    run_p.add_argument(
+        "--mesa-repo", type=Path, default=Path("/home/yasin/Desktop/MESA")
+    )
     run_p.add_argument("--config", type=Path, default=None)
-    run_p.add_argument("--resume", type=str, default=None, help="Resume an existing run by run ID")
+    run_p.add_argument(
+        "--resume", type=str, default=None, help="Resume an existing run by run ID"
+    )
 
     # status
-    status_p = subparsers.add_parser("status", help="Inspect current or latest run status")
+    status_p = subparsers.add_parser(
+        "status", help="Inspect current or latest run status"
+    )
     status_p.add_argument("--run-id", type=str, default=None, help="Target run ID")
     status_p.add_argument("--json", action="store_true", help="Output status as JSON")
 
@@ -533,7 +603,9 @@ def main() -> None:
     resume_p = subparsers.add_parser("resume", help="Resume a paused endurance session")
     resume_p.add_argument("--run-id", type=str, default=None, help="Target run ID")
 
-    stop_p = subparsers.add_parser("stop", help="Safely stop the active endurance session")
+    stop_p = subparsers.add_parser(
+        "stop", help="Safely stop the active endurance session"
+    )
     stop_p.add_argument("--run-id", type=str, default=None, help="Target run ID")
 
     # report
@@ -541,7 +613,9 @@ def main() -> None:
     report_p.add_argument("run_id", type=str, nargs="?")
 
     # teardown
-    teardown_p = subparsers.add_parser("teardown", help="Safely remove candidate worktree and run data")
+    teardown_p = subparsers.add_parser(
+        "teardown", help="Safely remove candidate worktree and run data"
+    )
     teardown_p.add_argument("run_id", type=str, nargs="?")
     teardown_p.add_argument("--mesa-repo", type=Path, default=None)
     teardown_p.add_argument("--config", type=Path, default=None)

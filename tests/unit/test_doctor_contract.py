@@ -1,29 +1,45 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import pytest
 
 from mesa_qa.cli import run_doctor_checks
-from mesa_qa.config import QAConfig
 
 
 def _init_git_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True
+    )
     subprocess.run(["git", "config", "user.name", "QA Doctor"], cwd=path, check=True)
-    subprocess.run(["git", "config", "user.email", "doc@mesa.test"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "doc@mesa.test"], cwd=path, check=True
+    )
     f = path / "README.md"
     f.write_text("# Doctor Test Repo\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=path, check=True)
 
 
+def _doctor_config(path: Path, repo: Path, candidate_python: Path) -> None:
+    path.write_text(
+        f"""
+mesa:
+  repo_path: "{repo}"
+candidate:
+  worktree_root: "{repo.parent / 'candidates'}"
+  python_path: "{candidate_python}"
+""",
+        encoding="utf-8",
+    )
+
+
 def test_doctor_contract_success(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setenv("MESA_NORMAL_STORAGE_ROOT", str(tmp_path / "mesa_normal_storage"))
+    monkeypatch.setenv(
+        "MESA_NORMAL_STORAGE_ROOT", str(tmp_path / "mesa_normal_storage")
+    )
     repo = tmp_path / "MESA"
     _init_git_repo(repo)
 
@@ -31,11 +47,15 @@ def test_doctor_contract_success(tmp_path, monkeypatch):
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True, exist_ok=True)
     py_bin = venv_bin / "python"
-    py_bin.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo 3.12.0; fi\nexit 0\n")
+    py_bin.write_text('#!/bin/sh\nif [ "$1" = "-c" ]; then echo 3.12.0; fi\nexit 0\n')
     py_bin.chmod(0o755)
     mesa_cli = venv_bin / "mesa"
     mesa_cli.write_text("#!/bin/sh\nexit 0\n")
     mesa_cli.chmod(0o755)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'mesa'\n", encoding="utf-8")
+    (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    cfg_file = tmp_path / "qa_config.yaml"
+    _doctor_config(cfg_file, repo, py_bin)
 
     orig_run = subprocess.run
 
@@ -48,15 +68,24 @@ def test_doctor_contract_success(tmp_path, monkeypatch):
             return res
         return orig_run(cmd, *args, **kwargs)
 
-    with patch("shutil.which", return_value="/usr/bin/codex"), \
-         patch("subprocess.run", side_effect=selective_run):
+    def selective_which(name):
+        return "/fake/uv" if name == "uv" else "/usr/bin/codex"
 
-        success, passes, issues = run_doctor_checks(mesa_repo=repo)
+    with (
+        patch("shutil.which", side_effect=selective_which),
+        patch("subprocess.run", side_effect=selective_run),
+    ):
+
+        success, passes, issues = run_doctor_checks(
+            config_path=cfg_file, mesa_repo=repo
+        )
         assert issues == []
         assert success is True
         assert any("MESA repository verified" in p for p in passes)
         assert any("Codex auth type" in p for p in passes)
-        assert any("Paid-provider fallback policy: strictly disabled" in p for p in passes)
+        assert any(
+            "Paid-provider fallback policy: strictly disabled" in p for p in passes
+        )
         assert any("MESA validation mode" in p for p in passes)
 
 
@@ -73,16 +102,21 @@ def test_doctor_detects_candidate_root_collision(tmp_path, monkeypatch):
     _init_git_repo(repo)
 
     cfg_file = tmp_path / "qa_config.yaml"
-    cfg_file.write_text(f"""
+    cfg_file.write_text(
+        f"""
 mesa:
   repo_path: "{repo}"
 candidate:
   worktree_root: "{repo}"
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     success, passes, issues = run_doctor_checks(config_path=cfg_file, mesa_repo=repo)
     assert success is False
-    assert any("Candidate root cannot equal MESA main checkout" in iss for iss in issues)
+    assert any(
+        "Candidate root cannot equal MESA main checkout" in iss for iss in issues
+    )
 
 
 def test_doctor_detects_missing_codex_cli(tmp_path, monkeypatch):
@@ -103,30 +137,15 @@ def test_doctor_detects_missing_codex_cli(tmp_path, monkeypatch):
         assert any("Codex CLI executable" in iss for iss in issues)
 
 
-def test_doctor_detects_missing_pytest(tmp_path, monkeypatch):
+def test_doctor_reports_candidate_environment_not_ready(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     repo = tmp_path / "MESA"
     _init_git_repo(repo)
 
-    venv_bin = repo / ".venv" / "bin"
-    venv_bin.mkdir(parents=True, exist_ok=True)
-    # Python script that fails when -m pytest is requested
-    (venv_bin / "python").write_text("""#!/usr/bin/env python3
-import sys
-if "-m" in sys.argv and "pytest" in sys.argv:
-    sys.exit(1)
-if "-c" in sys.argv:
-    print("3.12.0")
-sys.exit(0)
-""")
-    (venv_bin / "python").chmod(0o755)
-    (venv_bin / "mesa").write_text("#!/bin/sh\nexit 0\n")
-    (venv_bin / "mesa").chmod(0o755)
-
     with patch("shutil.which", return_value="/usr/bin/codex"):
         success, passes, issues = run_doctor_checks(mesa_repo=repo)
         assert success is False
-        assert any("pytest is missing" in iss for iss in issues)
+        assert any("Candidate environment is not ready" in iss for iss in issues)
 
 
 def test_doctor_rejects_python_313(tmp_path, monkeypatch):
@@ -137,15 +156,26 @@ def test_doctor_rejects_python_313(tmp_path, monkeypatch):
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True, exist_ok=True)
     (venv_bin / "python").write_text(
-        "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo 3.13.0; fi\nexit 0\n",
+        '#!/bin/sh\nif [ "$1" = "-c" ]; then echo 3.13.0; fi\nexit 0\n',
         encoding="utf-8",
     )
     (venv_bin / "python").chmod(0o755)
     (venv_bin / "mesa").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (venv_bin / "mesa").chmod(0o755)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'mesa'\n", encoding="utf-8")
+    (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    cfg_file = tmp_path / "qa_config.yaml"
+    _doctor_config(cfg_file, repo, venv_bin / "python")
 
-    with patch("shutil.which", return_value="/usr/bin/codex"):
-        success, _passes, issues = run_doctor_checks(mesa_repo=repo)
+    def selective_which(name):
+        return "/fake/uv" if name == "uv" else "/usr/bin/codex"
+
+    with patch("shutil.which", side_effect=selective_which):
+        success, _passes, issues = run_doctor_checks(
+            config_path=cfg_file, mesa_repo=repo
+        )
 
     assert success is False
-    assert any("Unsupported MESA Python runtime 3.13.0" in issue for issue in issues)
+    assert any(
+        "Unsupported candidate Python runtime 3.13.0" in issue for issue in issues
+    )

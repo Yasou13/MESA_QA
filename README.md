@@ -23,7 +23,10 @@ When reproducible defects are detected, `MESA-QA` isolates the failure in a dedi
   stack.
 - Git 2.30+
 - MESA Repository Checkout (`/home/yasin/Desktop/MESA`)
-- MESA Virtual Environment (`/home/yasin/Desktop/MESA/.venv`)
+- A supported candidate base interpreter (3.10–3.12; Python 3.12 is the
+  default target). MESA-QA creates the actual candidate environment under its
+  own run directory using MESA's locked `uv sync` bootstrap; it never modifies
+  or reuses `/home/yasin/Desktop/MESA/.venv`.
 - OpenAI Codex CLI (`codex`)
 
 ---
@@ -36,7 +39,7 @@ git clone https://github.com/Yasou13/MESA_QA.git
 cd MESA_QA
 
 # Run prerequisite doctor check
-PYTHONPATH=src /home/yasin/Desktop/MESA/.venv/bin/python -m mesa_qa.cli doctor
+PYTHONPATH=src /path/to/mesa-qa-python -m mesa_qa.cli doctor
 ```
 
 ---
@@ -130,5 +133,5 @@ git -C /home/yasin/Desktop/MESA branch -D qa/autonomous-<run_id>
 
 ```bash
 # Run all unit and integration tests
-PYTHONPATH=src /home/yasin/Desktop/MESA/.venv/bin/python -m pytest tests/unit tests/integration/
+PYTHONPATH=src /path/to/mesa-qa-python -m pytest tests/unit tests/integration/
 ```

@@ -14,6 +14,11 @@ mesa:
 candidate:
   worktree_root: /home/yasin/Desktop/MESA-QA-candidate
   branch_prefix: qa/autonomous
+  # Base interpreter for the QA-owned candidate virtualenv. If omitted, uv
+  # resolves python_version; it never reuses MESA/.venv.
+  python_path: null
+  python_version: "3.12"
+  uv_binary: uv
 
 run:
   duration_hours: 8

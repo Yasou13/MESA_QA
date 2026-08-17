@@ -10,6 +10,10 @@ from mesa_qa.config import QAConfig
 from mesa_qa.runtime.worktree import WorktreeManager
 from mesa_qa.runtime.mesa_runtime import MesaCandidateRuntime
 from mesa_qa.runtime.mcp_gateway import MesaMCPGatewayProcess
+from mesa_qa.runtime.candidate_environment import (
+    CandidateEnvironmentManager,
+    CandidatePythonEnvironment,
+)
 from mesa_qa.storage.paths import assert_safe_paths, discover_normal_mesa_storage
 
 logger = logging.getLogger("mesa_qa.process_manager")
@@ -27,12 +31,16 @@ class ProcessManager:
         self.candidate_worktree: Optional[Path] = None
         self.candidate_branch: Optional[str] = None
         self.candidate_base_sha: Optional[str] = None
+        self.candidate_environment: Optional[CandidatePythonEnvironment] = None
+        self.candidate_python: Optional[Path] = None
         self.mesa_runtime: Optional[MesaCandidateRuntime] = None
         self.mcp_gateway: Optional[MesaMCPGatewayProcess] = None
 
         # Per-run ephemeral credentials
         self.api_key: str = secrets.token_urlsafe(32)
-        self.encryption_key: str = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+        self.encryption_key: str = base64.b64encode(secrets.token_bytes(32)).decode(
+            "ascii"
+        )
         self.principal_id: str = f"qa-service-principal-{secrets.token_hex(6)}"
 
     def setup_worktree(
@@ -60,9 +68,27 @@ class ProcessManager:
         )
         return self.candidate_worktree
 
+    def prepare_candidate_environment(self) -> CandidatePythonEnvironment:
+        """Resolve and bootstrap the one interpreter used by every candidate command."""
+        if not self.candidate_worktree:
+            raise RuntimeError("Candidate worktree is not set up!")
+        manager = CandidateEnvironmentManager(self.config.candidate, self.run_dir)
+        self.candidate_environment = manager.prepare(self.candidate_worktree)
+        self.candidate_python = self.candidate_environment.python_bin
+        logger.info(
+            "Candidate runtime Python resolved to %s (%s) in %s",
+            self.candidate_python,
+            self.candidate_environment.version,
+            self.candidate_environment.environment_root,
+        )
+        return self.candidate_environment
+
     async def start_all(self) -> None:
         if not self.candidate_worktree:
             raise RuntimeError("Candidate worktree is not set up!")
+
+        candidate_environment = self.prepare_candidate_environment()
+        candidate_python = candidate_environment.python_bin
 
         qa_storage = self.run_dir / "mesa-storage"
         logs_dir = self.run_dir / "logs"
@@ -71,7 +97,7 @@ class ProcessManager:
         # 1. Mesa Candidate Runtime
         self.mesa_runtime = MesaCandidateRuntime(
             candidate_worktree=self.candidate_worktree,
-            python_bin=self.config.mesa.python_path,
+            python_bin=candidate_python,
             storage_root=qa_storage,
             port=self.config.mesa.port,
             api_key=self.api_key,
@@ -90,7 +116,7 @@ class ProcessManager:
         # 2. Mesa MCP Gateway
         self.mcp_gateway = MesaMCPGatewayProcess(
             candidate_worktree=self.candidate_worktree,
-            python_bin=self.config.mesa.python_path,
+            python_bin=candidate_python,
             control_db_path=control_db,
             gateway_port=self.config.mesa.gateway_port,
             mesa_api_url=self.mesa_runtime.base_url,
@@ -103,7 +129,10 @@ class ProcessManager:
             raise RuntimeError("Failed to start MESA MCP Gateway")
 
     async def restart_all(self) -> None:
-        logger.info("Restarting MESA candidate services from worktree %s...", self.candidate_worktree)
+        logger.info(
+            "Restarting MESA candidate services from worktree %s...",
+            self.candidate_worktree,
+        )
         if not self.candidate_worktree:
             raise RuntimeError("Candidate worktree is not set up!")
 
@@ -127,7 +156,9 @@ class ProcessManager:
         if self.mesa_runtime:
             await self.mesa_runtime.stop()
 
-    def teardown(self, delete_worktree: bool = True, delete_branch: bool = False) -> None:
+    def teardown(
+        self, delete_worktree: bool = True, delete_branch: bool = False
+    ) -> None:
         if delete_worktree and self.candidate_worktree:
             self.worktree_mgr.remove_candidate_worktree(
                 self.candidate_worktree,
@@ -136,7 +167,9 @@ class ProcessManager:
             )
             self.candidate_worktree = None
 
-    async def async_teardown(self, delete_worktree: bool = True, delete_branch: bool = False) -> None:
+    async def async_teardown(
+        self, delete_worktree: bool = True, delete_branch: bool = False
+    ) -> None:
         logger.info("Executing teardown of MESA candidate services and resources...")
         await self.stop_all()
         self.teardown(delete_worktree=delete_worktree, delete_branch=delete_branch)
