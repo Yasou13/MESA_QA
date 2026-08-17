@@ -2,13 +2,13 @@
   "schema_version": 1,
   "project": "MESA-QA",
   "target": "MVP",
-  "overall_status": "ACTIVE",
+  "overall_status": "BLOCKED_ENV",
   "certification": "NO_GO",
   "current": {
-    "phase": "DISCOVERY",
-    "task": "MVP-001",
-    "status": "IN_PROGRESS",
-    "blocker": "Fresh local verification is blocked by an aiosqlite hang under the installed Python 3.13 environment; live Codex/MESA acceptance is NOT_RUN."
+    "phase": "CERTIFICATION",
+    "task": "MVP-002",
+    "status": "BLOCKED_ENV",
+    "blocker": "Full pytest blocks in aiosqlite.connect() under the installed Python 3.13 environment. Live Codex/MESA acceptance is NOT_RUN."
   },
   "safety": {
     "repair_enabled": false,
@@ -22,12 +22,12 @@
     "MVP-001": {
       "title": "Fresh discovery and baseline verification",
       "phase": "DISCOVERY",
-      "status": "IN_PROGRESS",
+      "status": "BLOCKED_ENV",
       "depends_on": [],
       "files": [".agents/STATE.json", "src/mesa_qa/repair/verification.py", "src/mesa_qa/telemetry/reports.py"],
       "verification": ["compileall", "pytest collection", "targeted unit tests"],
-      "evidence": [],
-      "commit": null,
+      "evidence": ["python -m compileall -q src tests (PASS)", "pytest --collect-only tests/unit: 205 collected (PASS)", "pytest tests/unit: BLOCKED at aiosqlite fixture setup", "pytest test_pre_fix_fail.py test_evidence_final_report.py: 13 passed"],
+      "commit": "336e97a4700751542e3008e73c86a242507df121",
       "blocker": "Full pytest is blocked by an environment-level aiosqlite hang; live Codex/MESA evidence is NOT_RUN."
     },
     "MVP-002": {
@@ -40,10 +40,21 @@
       "evidence": [],
       "commit": null,
       "blocker": "Requires a working MESA Python environment and authenticated Codex/MESA live execution."
+    },
+    "MVP-003": {
+      "title": "Executable production reproduction and regression handoff",
+      "phase": "REPRODUCTION",
+      "status": "FAIL",
+      "depends_on": ["MVP-001"],
+      "files": ["src/mesa_qa/controller.py", "src/mesa_qa/repair/evidence.py"],
+      "verification": [],
+      "evidence": ["Fresh audit: generated reproduce.py only reads evidence and prints a sequence; no real candidate execution command is produced."],
+      "commit": null,
+      "blocker": "P0 source gap: confirmed anomalies do not produce an executable live-MCP reproduction or a real pre-fix regression handoff."
     }
   },
   "acceptance": {
-    "build_static_checks": "NOT_RUN",
+    "build_static_checks": "PASS",
     "unit_tests": "BLOCKED",
     "integration_tests": "NOT_RUN",
     "live_mcp_acceptance": "NOT_RUN",
@@ -57,5 +68,5 @@
     "candidate_sha": null,
     "original_mesa_baseline": null
   },
-  "last_verified_commit": null
+  "last_verified_commit": "336e97a4700751542e3008e73c86a242507df121"
 }
