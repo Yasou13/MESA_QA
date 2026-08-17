@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -28,11 +29,17 @@ class CodexRunner:
         launcher_prefix: Optional[List[str]] = None,
         mcp_gateway_url: Optional[str] = None,
         max_output_bytes: int = 1_000_000,
+        model: Optional[str] = None,
+        json_events: bool = True,
     ) -> CodexRunResult:
         cwd = cwd.resolve()
 
         # Build command: npx -y @openai/codex or codex binary
-        cmd = list(launcher_prefix or []) + [self.codex_binary, "exec", "--json"]
+        cmd = list(launcher_prefix or []) + [self.codex_binary, "exec"]
+        if json_events:
+            cmd.append("--json")
+        if model:
+            cmd.extend(["-m", model])
         # The Tester workspace is a QA-owned contained directory rather than a
         # source checkout. Codex otherwise refuses to run before MCP is reached.
         cmd.append("--skip-git-repo-check")
@@ -84,6 +91,7 @@ class CodexRunner:
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
 
             try:
@@ -92,8 +100,12 @@ class CodexRunner:
                     timeout=float(timeout_seconds),
                 )
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+                if process.returncode is None:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except Exception:
+                        process.kill()
+                    await process.wait()
                 logger.error(
                     "Codex execution timed out after %d seconds", timeout_seconds
                 )
@@ -101,6 +113,17 @@ class CodexRunner:
                     returncode=124,
                     raw_stderr="Codex execution timed out",
                 )
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except Exception:
+                        process.kill()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                    except Exception:
+                        pass
+                raise
 
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             stderr = stderr_bytes.decode("utf-8", errors="replace")
