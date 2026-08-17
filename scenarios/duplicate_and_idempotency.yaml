@@ -1,0 +1,52 @@
+name: duplicate_and_idempotency
+description: Tests duplicate memory ingestion, semantic duplicates, and idempotent writes.
+events:
+  - id: evt_dup_01
+    kind: remember
+    entity: cluster:prod-us
+    field: region
+    value: us-east-1
+    text: "Production US cluster runs in region us-east-1."
+
+  - id: evt_dup_02
+    kind: duplicate
+    entity: cluster:prod-us
+    field: region
+    value: us-east-1
+    text: "Production US cluster runs in region us-east-1."
+
+  - id: evt_dup_03
+    kind: recall
+    entity: cluster:prod-us
+    field: region
+    question: "Which region does cluster prod-us run in?"
+    expected: "us-east-1"
+
+  - id: evt_dup_04
+    kind: semantic_duplicate
+    entity: cluster:prod-us
+    field: region
+    value: us-east-1
+    text: "The prod-us cluster is hosted in us-east-1 datacenter."
+
+  - id: evt_dup_05
+    kind: recall
+    entity: cluster:prod-us
+    field: region
+    question: "What is the datacenter region for prod-us?"
+    expected: "us-east-1"
+
+  - id: evt_dup_06
+    kind: idempotency
+    entity: cluster:prod-us
+    field: region
+    value: us-east-1
+    idempotency_key: "idem_cluster_prod_us_region"
+    text: "Production US cluster runs in region us-east-1."
+
+  - id: evt_dup_07
+    kind: recall
+    entity: cluster:prod-us
+    field: region
+    question: "Confirm region for cluster prod-us."
+    expected: "us-east-1"

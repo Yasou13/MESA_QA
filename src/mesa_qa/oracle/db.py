@@ -40,21 +40,40 @@ class OracleDB:
                 (event.entity, event.entity.split(":")[0] if ":" in event.entity else "entity", now),
             )
 
-            if event.kind == ActionKind.REMEMBER:
-                fact_id = f"fact_{event.id}"
-                await db.execute(
-                    """INSERT INTO facts (fact_id, entity_key, field, value_json, status, valid_from, source_event_id)
-                       VALUES (?, ?, ?, ?, 'CURRENT', ?, ?)""",
-                    (fact_id, event.entity, event.field or "general", json.dumps(event.value), now, event.id),
-                )
-                await db.execute(
-                    """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
-                       VALUES (?, ?, ?, ?, 'REMEMBER', ?, ?)""",
-                    (fact_id, event.entity, event.field or "general", json.dumps(event.value), event.id, now),
-                )
+            if event.kind in {
+                ActionKind.REMEMBER,
+                ActionKind.DUPLICATE,
+                ActionKind.SEMANTIC_DUPLICATE,
+                ActionKind.IDEMPOTENCY,
+            }:
+                field_name = event.field or "general"
+                async with db.execute(
+                    "SELECT fact_id, value_json FROM facts WHERE entity_key = ? AND field = ? AND status = 'CURRENT'",
+                    (event.entity, field_name),
+                ) as cursor:
+                    existing = await cursor.fetchone()
 
-            elif event.kind == ActionKind.CORRECT:
-                # Mark previous CURRENT facts for this entity+field as HISTORICAL
+                if existing:
+                    fact_id = existing[0]
+                    await db.execute(
+                        """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (fact_id, event.entity, field_name, json.dumps(event.value), event.kind.value.upper(), event.id, now),
+                    )
+                else:
+                    fact_id = f"fact_{event.id}"
+                    await db.execute(
+                        """INSERT INTO facts (fact_id, entity_key, field, value_json, status, valid_from, source_event_id)
+                           VALUES (?, ?, ?, ?, 'CURRENT', ?, ?)""",
+                        (fact_id, event.entity, field_name, json.dumps(event.value), now, event.id),
+                    )
+                    await db.execute(
+                        """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (fact_id, event.entity, field_name, json.dumps(event.value), event.kind.value.upper(), event.id, now),
+                    )
+
+            elif event.kind in {ActionKind.CORRECT, ActionKind.CONFLICT}:
                 field_name = event.field or "general"
                 await db.execute(
                     "UPDATE facts SET status = 'HISTORICAL', valid_to = ? WHERE entity_key = ? AND field = ? AND status = 'CURRENT'",
@@ -68,9 +87,37 @@ class OracleDB:
                 )
                 await db.execute(
                     """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
-                       VALUES (?, ?, ?, ?, 'CORRECT', ?, ?)""",
-                    (fact_id, event.entity, field_name, json.dumps(event.value), event.id, now),
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (fact_id, event.entity, field_name, json.dumps(event.value), event.kind.value.upper(), event.id, now),
                 )
+
+            elif event.kind == ActionKind.MULTI_FACT:
+                if isinstance(event.value, dict):
+                    for k, v in event.value.items():
+                        sub_fact_id = f"fact_{event.id}_{k}"
+                        await db.execute(
+                            """INSERT INTO facts (fact_id, entity_key, field, value_json, status, valid_from, source_event_id)
+                               VALUES (?, ?, ?, ?, 'CURRENT', ?, ?)""",
+                            (sub_fact_id, event.entity, k, json.dumps(v), now, event.id),
+                        )
+                        await db.execute(
+                            """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
+                               VALUES (?, ?, ?, ?, 'MULTI_FACT', ?, ?)""",
+                            (sub_fact_id, event.entity, k, json.dumps(v), event.id, now),
+                        )
+                else:
+                    fact_id = f"fact_{event.id}"
+                    field_name = event.field or "general"
+                    await db.execute(
+                        """INSERT INTO facts (fact_id, entity_key, field, value_json, status, valid_from, source_event_id)
+                           VALUES (?, ?, ?, ?, 'CURRENT', ?, ?)""",
+                        (fact_id, event.entity, field_name, json.dumps(event.value), now, event.id),
+                    )
+                    await db.execute(
+                        """INSERT INTO fact_history (fact_id, entity_key, field, value_json, action, event_id, recorded_at)
+                           VALUES (?, ?, ?, ?, 'MULTI_FACT', ?, ?)""",
+                        (fact_id, event.entity, field_name, json.dumps(event.value), event.id, now),
+                    )
 
             elif event.kind == ActionKind.FORGET:
                 field_name = event.field or "general"
@@ -106,11 +153,30 @@ class OracleDB:
                 rows = await cursor.fetchall()
                 return [json.loads(r[0]) for r in rows if r[0] is not None]
 
-    async def is_forgotten(self, entity: str, field: str) -> bool:
+    async def get_historical_facts(self, entity: str, field: str) -> List[Any]:
+        """Return previous historical values for entity+field that have been replaced/corrected, excluding CURRENT."""
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
-                "SELECT count(*) FROM facts WHERE entity_key = ? AND field = ? AND status = 'FORGOTTEN'",
+                "SELECT value_json FROM facts WHERE entity_key = ? AND field = ? AND status = 'HISTORICAL' ORDER BY valid_from ASC",
+                (entity, field),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [json.loads(r[0]) for r in rows if r[0] is not None]
+
+    async def is_forgotten(self, entity: str, field: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            # If there is an active CURRENT fact, it is NOT forgotten
+            async with db.execute(
+                "SELECT 1 FROM facts WHERE entity_key = ? AND field = ? AND status = 'CURRENT' LIMIT 1",
+                (entity, field),
+            ) as cursor:
+                if await cursor.fetchone():
+                    return False
+
+            # Check if the most recent history action was FORGET
+            async with db.execute(
+                "SELECT action FROM fact_history WHERE entity_key = ? AND field = ? ORDER BY id DESC LIMIT 1",
                 (entity, field),
             ) as cursor:
                 row = await cursor.fetchone()
-                return bool(row and row[0] > 0)
+                return bool(row and row[0] == "FORGET")

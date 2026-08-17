@@ -1,0 +1,46 @@
+name: forget_and_reremember
+description: Tests forget followed by re-remembering new facts on the same entity and field.
+events:
+  - id: evt_fr_01
+    kind: remember
+    entity: user:charlie
+    field: title
+    value: Junior Developer
+    text: "Charlie joined as Junior Developer."
+
+  - id: evt_fr_02
+    kind: recall
+    entity: user:charlie
+    field: title
+    mode: current
+    question: "What is Charlie's title?"
+    expected: "Junior Developer"
+
+  - id: evt_fr_03
+    kind: forget
+    entity: user:charlie
+    field: title
+    text: "Remove title record for Charlie."
+
+  - id: evt_fr_04
+    kind: recall
+    entity: user:charlie
+    field: title
+    mode: forgotten
+    question: "What is Charlie's title?"
+    expected: null
+
+  - id: evt_fr_05
+    kind: remember
+    entity: user:charlie
+    field: title
+    value: Staff Engineer
+    text: "Charlie has returned and is now Staff Engineer."
+
+  - id: evt_fr_06
+    kind: recall
+    entity: user:charlie
+    field: title
+    mode: current
+    question: "What is Charlie's current title?"
+    expected: "Staff Engineer"

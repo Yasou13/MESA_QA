@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from mesa_qa.judge.recall_matcher import match_recall
 from mesa_qa.models import ScenarioEvent, TesterObservation, Verdict
 from mesa_qa.oracle.db import OracleDB
 
@@ -86,23 +85,18 @@ class OracleEvaluator:
             return Verdict(is_pass=True, is_candidate_anomaly=False)
 
         if mode == "historical" and expected is None:
-            expected = await self.oracle_db.get_fact_history(entity, field)
-        expected_values = expected if isinstance(expected, list) else [expected]
-        if expected is None or not all(
-            str(value).strip().lower() in actual_text.lower()
-            for value in expected_values
-        ):
-            return Verdict(
-                is_pass=False,
-                is_candidate_anomaly=True,
-                category="MEMORY_RECALL_MISMATCH",
-                reason=f"Expected {expected!r} not found in actual response {actual_text!r}",
-                expected=expected,
-                actual=actual_text,
-            )
+            expected = await self.oracle_db.get_historical_facts(entity, field)
+
+        is_pass, category, reason = match_recall(
+            expected=expected,
+            actual_text=actual_text,
+            structured_actual=observation.actual,
+        )
         return Verdict(
-            is_pass=True,
-            is_candidate_anomaly=False,
+            is_pass=is_pass,
+            is_candidate_anomaly=not is_pass,
+            category=category,
+            reason=reason,
             expected=expected,
             actual=actual_text,
         )

@@ -1,0 +1,32 @@
+name: multi_fact
+description: Tests multi-fact ingestion across multiple fields on an entity.
+events:
+  - id: evt_mf_01
+    kind: multi_fact
+    entity: db:primary
+    value:
+      engine: PostgreSQL
+      version: "16.2"
+      replicas: 3
+    text: "Primary database runs PostgreSQL version 16.2 with 3 read replicas."
+
+  - id: evt_mf_02
+    kind: recall
+    entity: db:primary
+    field: engine
+    question: "What is the primary database engine?"
+    expected: "PostgreSQL"
+
+  - id: evt_mf_03
+    kind: recall
+    entity: db:primary
+    field: version
+    question: "What version of database engine is used?"
+    expected: "16.2"
+
+  - id: evt_mf_04
+    kind: recall
+    entity: db:primary
+    field: replicas
+    question: "How many read replicas are configured for primary db?"
+    expected: 3
