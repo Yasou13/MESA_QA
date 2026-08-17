@@ -17,8 +17,8 @@ class MesaSettings(StrictBaseModel):
     port: int = 18000
     gateway_port: int = 18765
     normal_storage_root: Optional[Path] = None
-    model_enabled: bool = True
-    external_provider_enabled: bool = True
+    model_enabled: bool = False
+    external_provider_enabled: bool = False
     llm_provider: str = "mock"
     validation_mode: Optional[int] = Field(default=0)
     candidate_ref: Optional[str] = Field(default=None)

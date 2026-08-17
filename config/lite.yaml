@@ -1,5 +1,6 @@
 mesa:
   validation_mode: 0
+  model_enabled: false
   external_provider_enabled: false
 
 run:
@@ -13,4 +14,3 @@ repair:
 
 resources:
   sample_seconds: 60
-

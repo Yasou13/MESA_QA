@@ -5,8 +5,8 @@ mesa:
   port: 18000
   gateway_port: 18765
   normal_storage_root: null
-  model_enabled: true
-  external_provider_enabled: true
+  model_enabled: false
+  external_provider_enabled: false
   llm_provider: mock
   validation_mode: 0
   candidate_ref: null

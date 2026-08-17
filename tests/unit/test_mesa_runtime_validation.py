@@ -1,4 +1,5 @@
 import pytest
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -133,3 +134,32 @@ async def test_mesa_runtime_does_not_override_candidate_embedding_identity():
 
     env = mock_exec.call_args.kwargs["env"]
     assert "MESA_EMBEDDING_DIMENSION" not in env
+
+
+@pytest.mark.asyncio
+async def test_mesa_runtime_writes_sanitized_launch_lifecycle(tmp_path):
+    runtime = MesaCandidateRuntime(
+        candidate_worktree=tmp_path / "candidate",
+        python_bin=tmp_path / "venv" / "bin" / "python",
+        storage_root=tmp_path / "storage",
+        api_key="must-not-leak",
+        log_file=tmp_path / "logs" / "mesa.log",
+    )
+    runtime.candidate_worktree.mkdir()
+
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        mock_proc = AsyncMock()
+        mock_proc.pid = 777
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        await runtime.start()
+
+    evidence = json.loads(runtime.lifecycle_file.read_text(encoding="utf-8"))
+    assert evidence["command"] == [
+        str((tmp_path / "venv" / "bin" / "python").absolute()),
+        "-m",
+        "mesa_memory.runtime_entrypoint",
+    ]
+    assert evidence["cwd"] == str((tmp_path / "candidate").resolve())
+    assert evidence["pid"] == 777
+    assert evidence["environment"]["MESA_API_KEY"] == "<redacted>"

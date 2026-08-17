@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 import logging
@@ -42,10 +44,19 @@ class MesaCandidateRuntime:
         self.validation_mode = validation_mode
         self.log_file = log_file
         self._process: Optional[asyncio.subprocess.Process] = None
+        self.launch_command: list[str] = []
+        self.launch_environment: dict[str, str] = {}
+        self.health_attempts: list[dict[str, object]] = []
+        self.started_at: Optional[float] = None
+        self.exited_at: Optional[float] = None
 
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
+
+    @property
+    def lifecycle_file(self) -> Optional[Path]:
+        return self.log_file.parent / "mesa.lifecycle.json" if self.log_file else None
 
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -86,12 +97,21 @@ class MesaCandidateRuntime:
                 env["MESA_TIER3_LLM_PROVIDER_B"] = self.llm_provider
                 env["MESA_TIER3_LLM_MODEL_B"] = "mesa-qa-validator-b"
 
+        cmd = [str(self.python_bin), "-m", "mesa_memory.runtime_entrypoint"]
+        self.launch_command = cmd
+        self.launch_environment = self._redacted_environment(env)
+        self.health_attempts = []
+        self.started_at = time.time()
+        self.exited_at = None
+
         log_handle = None
+        stderr_handle = None
         if self.log_file:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             log_handle = open(self.log_file, "a", encoding="utf-8")
-
-        cmd = [str(self.python_bin), "-m", "mesa_memory.runtime_entrypoint"]
+            stderr_handle = open(
+                self.log_file.with_suffix(".stderr.log"), "a", encoding="utf-8"
+            )
         logger.info(
             "Launching MESA candidate runtime: %s (cwd: %s)",
             " ".join(cmd),
@@ -104,18 +124,24 @@ class MesaCandidateRuntime:
                 cwd=str(self.candidate_worktree),
                 env=env,
                 stdout=log_handle if log_handle is not None else subprocess.DEVNULL,
-                stderr=log_handle if log_handle is not None else subprocess.DEVNULL,
+                stderr=stderr_handle
+                if stderr_handle is not None
+                else subprocess.DEVNULL,
             )
         finally:
             if log_handle is not None:
                 log_handle.close()
+            if stderr_handle is not None:
+                stderr_handle.close()
 
         logger.info("MESA candidate process started with PID %d", self._process.pid)
+        self._write_lifecycle()
 
     async def wait_until_ready(self, timeout_seconds: float = 45.0) -> bool:
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout_seconds:
             if self._process and self._process.returncode is not None:
+                self.exited_at = time.time()
                 log_snippet = ""
                 if self.log_file and self.log_file.exists():
                     try:
@@ -127,15 +153,25 @@ class MesaCandidateRuntime:
                     self._process.returncode,
                     log_snippet,
                 )
+                self._write_lifecycle()
                 return False
             health = await check_mesa_health(
                 self.base_url, api_key=self.api_key, timeout=2.0
             )
+            self.health_attempts.append(
+                {
+                    "at": time.time(),
+                    "url": f"{self.base_url}/health/init",
+                    "result": health,
+                }
+            )
+            self._write_lifecycle()
             if health["status"] == "healthy":
                 logger.info("MESA candidate runtime is READY at %s", self.base_url)
                 return True
             await asyncio.sleep(1.0)
         logger.error("Timed out waiting for MESA candidate runtime to become ready")
+        self._write_lifecycle()
         return False
 
     async def stop(self) -> None:
@@ -154,3 +190,49 @@ class MesaCandidateRuntime:
             except ProcessLookupError:
                 pass
             logger.info("MESA candidate process stopped.")
+        if self._process and self._process.returncode is not None:
+            self.exited_at = time.time()
+        self._write_lifecycle()
+
+    @staticmethod
+    def _redacted_environment(env: dict[str, str]) -> dict[str, str]:
+        return {
+            key: "<redacted>"
+            if any(token in key for token in ("KEY", "TOKEN", "SECRET"))
+            else value
+            for key, value in sorted(env.items())
+        }
+
+    def _write_lifecycle(self) -> None:
+        lifecycle_file = self.lifecycle_file
+        if lifecycle_file is None:
+            return
+        elapsed = (
+            (self.exited_at or time.time()) - self.started_at
+            if self.started_at is not None
+            else None
+        )
+        lifecycle_file.write_text(
+            json.dumps(
+                {
+                    "command": self.launch_command,
+                    "cwd": str(self.candidate_worktree),
+                    "python": str(self.python_bin),
+                    "environment": self.launch_environment,
+                    "pid": self._process.pid if self._process else None,
+                    "started_at": self.started_at,
+                    "exited_at": self.exited_at,
+                    "exit_code": self._process.returncode if self._process else None,
+                    "elapsed_seconds": elapsed,
+                    "health_attempts": self.health_attempts,
+                    "stdout_log": str(self.log_file) if self.log_file else None,
+                    "stderr_log": str(self.log_file.with_suffix(".stderr.log"))
+                    if self.log_file
+                    else None,
+                },
+                indent=2,
+                default=str,
+            )
+            + "\n",
+            encoding="utf-8",
+        )

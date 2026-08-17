@@ -2,13 +2,13 @@
   "schema_version": 1,
   "project": "MESA-QA",
   "target": "MVP",
-  "overall_status": "BLOCKED_EXTERNAL",
+  "overall_status": "IN_PROGRESS",
   "certification": "NO_GO",
   "current": {
     "phase": "LIVE_ACCEPTANCE",
     "task": "MVP-002",
-    "status": "BLOCKED_EXTERNAL",
-    "blocker": "Revalidation against updated MESA SHA 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4 proved and fixed a MESA-QA stale embedding-dimension override (384 vs MESA's configured 768). The fresh QA-owned Python 3.12.13 candidate still exits with Uvicorn code 3 after migrations; live acceptance remains NOT_RUN pending an exact remaining cause."
+    "status": "IN_PROGRESS",
+    "blocker": null
   },
   "safety": {
     "repair_enabled": false,
@@ -33,13 +33,13 @@
     "MVP-002": {
       "title": "Real live acceptance and independent certification",
       "phase": "CERTIFICATION",
-      "status": "BLOCKED_EXTERNAL",
+      "status": "IN_PROGRESS",
       "depends_on": ["MVP-001"],
       "files": ["src/mesa_qa/runtime/candidate_environment.py", "src/mesa_qa/runtime/process_manager.py", "src/mesa_qa/cli.py", "src/mesa_qa/controller.py"],
       "verification": ["focused candidate-environment tests", "real candidate startup", "compileall", "unit and integration suites"],
-      "evidence": ["Candidate Python is explicitly resolved from candidate.python_path/python_version and range-validated before bootstrap; 3.13.12 rejects before uv commands and 3.12 accepts.", "MESA's uv sync --locked --active --extra dev creates a per-run Python 3.12.13 environment; runtime, gateway, binding/admin, and repair tools use that same venv path.", "Updated MESA baseline: mvp/certification-round-5-fact-embedding @ 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4, clean at capture. A fresh candidate from that SHA again completed the displayed Alembic sequence then exited code 3 before health.", "Root-cause probe exposed MESA-QA's stale MESA_EMBEDDING_DIMENSION=384 override: MESA rejected active local embedding space 768 with ProjectionGenerationIdentityMismatchError. The override was removed and a regression test added; focused runtime/candidate tests: 9 passed. The remaining code-3 failure must still be traced before certification."],
+      "evidence": ["Candidate Python is explicitly resolved from candidate.python_path/python_version and range-validated before bootstrap; 3.13.12 rejects before uv commands and 3.12 accepts.", "Updated MESA baseline and exact candidate ref: mvp/certification-round-5-fact-embedding @ 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4, clean at capture.", "Proven launcher cause: MESA-QA enabled external providers while the locked candidate environment does not install openai; MESA raised EmbeddingCompositionError from mesa_memory/embedding/service.py, Uvicorn mapped failed lifespan to exit 3. Defaults are now model_enabled=false and external_provider_enabled=false.", "Fresh run test-live-1787006327 used QA-owned Python 3.12.13, completed migrations, became healthy on health attempt 6, then was cleanly stopped; lifecycle evidence is in that run's logs/mesa.lifecycle.json.", "Python 3.12 integration: 8 passed, 1 skipped in 24.34s. Continuing with real Codex/MCP smoke; repair remains off."],
       "commit": null,
-      "blocker": "After correcting the proven stale MESA_EMBEDDING_DIMENSION launcher override, the candidate from updated SHA 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4 still exits code 3 after migrations before health. No healthy runtime, MCP smoke, endurance, repair acceptance, or final audit may be marked PASS."
+      "blocker": null
     },
     "MVP-003": {
       "title": "Executable production reproduction and regression handoff",
@@ -55,9 +55,9 @@
   },
   "acceptance": {
     "build_static_checks": "PASS",
-    "unit_tests": "PASS_WITH_FOCUSED_POSTFIX_EVIDENCE",
-    "integration_tests": "FAIL",
-    "live_mcp_acceptance": "NOT_RUN",
+    "unit_tests": "PASS",
+    "integration_tests": "PASS_WITH_1_SKIPPED_NONLIVE_TEST",
+    "live_mcp_acceptance": "IN_PROGRESS",
     "controlled_repair": "NOT_RUN",
     "independent_final_audit": "NOT_RUN"
   },

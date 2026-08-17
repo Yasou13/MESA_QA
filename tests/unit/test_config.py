@@ -13,7 +13,8 @@ def test_default_config_loading():
     assert cfg.repair.enabled is False
     assert cfg.approval.enabled is True
     assert cfg.approval.timeout_seconds == 90.0
-    assert cfg.mesa.model_enabled is True
+    assert cfg.mesa.model_enabled is False
+    assert cfg.mesa.external_provider_enabled is False
     assert cfg.mesa.llm_provider == "mock"
     assert cfg.mesa.validation_mode == 0
 
@@ -55,4 +56,3 @@ def test_dead_and_misleading_keys_rejected():
     for bad_cfg in forbidden_keys:
         with pytest.raises(ValidationError):
             QAConfig.model_validate(bad_cfg)
-
