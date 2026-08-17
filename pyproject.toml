@@ -7,7 +7,7 @@ name = "mesa-qa"
 version = "0.1.0"
 description = "Autonomous Resident Test Engineer System for MESA"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",

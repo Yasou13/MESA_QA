@@ -18,7 +18,9 @@ When reproducible defects are detected, `MESA-QA` isolates the failure in a dedi
 
 ## 2. Requirements
 
-- Python 3.10+
+- Python 3.10–3.12. Python 3.13 is currently unsupported because the
+  aiosqlite connection worker does not complete in the supported test/runtime
+  stack.
 - Git 2.30+
 - MESA Repository Checkout (`/home/yasin/Desktop/MESA`)
 - MESA Virtual Environment (`/home/yasin/Desktop/MESA/.venv`)

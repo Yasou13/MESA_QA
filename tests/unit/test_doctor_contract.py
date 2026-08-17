@@ -31,7 +31,7 @@ def test_doctor_contract_success(tmp_path, monkeypatch):
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True, exist_ok=True)
     py_bin = venv_bin / "python"
-    py_bin.write_text("#!/bin/sh\nexit 0\n")
+    py_bin.write_text("#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo 3.12.0; fi\nexit 0\n")
     py_bin.chmod(0o755)
     mesa_cli = venv_bin / "mesa"
     mesa_cli.write_text("#!/bin/sh\nexit 0\n")
@@ -115,6 +115,8 @@ def test_doctor_detects_missing_pytest(tmp_path, monkeypatch):
 import sys
 if "-m" in sys.argv and "pytest" in sys.argv:
     sys.exit(1)
+if "-c" in sys.argv:
+    print("3.12.0")
 sys.exit(0)
 """)
     (venv_bin / "python").chmod(0o755)
@@ -126,3 +128,24 @@ sys.exit(0)
         assert success is False
         assert any("pytest is missing" in iss for iss in issues)
 
+
+def test_doctor_rejects_python_313(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    repo = tmp_path / "MESA"
+    _init_git_repo(repo)
+
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True, exist_ok=True)
+    (venv_bin / "python").write_text(
+        "#!/bin/sh\nif [ \"$1\" = \"-c\" ]; then echo 3.13.0; fi\nexit 0\n",
+        encoding="utf-8",
+    )
+    (venv_bin / "python").chmod(0o755)
+    (venv_bin / "mesa").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (venv_bin / "mesa").chmod(0o755)
+
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        success, _passes, issues = run_doctor_checks(mesa_repo=repo)
+
+    assert success is False
+    assert any("Unsupported MESA Python runtime 3.13.0" in issue for issue in issues)

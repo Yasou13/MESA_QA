@@ -29,6 +29,27 @@ from mesa_qa.storage.paths import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("mesa_qa.cli")
 
+_SUPPORTED_PYTHON_MIN = (3, 10)
+_SUPPORTED_PYTHON_MAX_EXCLUSIVE = (3, 13)
+
+
+def _supported_python_version(python_bin: Path) -> tuple[bool, str]:
+    """Return whether the selected MESA runtime is supported by MESA-QA."""
+    probe = subprocess.run(
+        [str(python_bin), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    version = probe.stdout.strip()
+    try:
+        major, minor, _patch = (int(part) for part in version.split(".", 2))
+    except ValueError:
+        return False, "could not determine Python version"
+    supported = _SUPPORTED_PYTHON_MIN <= (major, minor) < _SUPPORTED_PYTHON_MAX_EXCLUSIVE
+    return supported, version
+
 
 def run_doctor_checks(
     config_path: Optional[Path] = None,
@@ -67,6 +88,15 @@ def run_doctor_checks(
     if not python_bin.exists():
         issues.append(f"MESA Python virtual environment missing: {python_bin}")
     else:
+        python_supported, python_version = _supported_python_version(python_bin)
+        if not python_supported:
+            issues.append(
+                "Unsupported MESA Python runtime "
+                f"{python_version}; MESA-QA requires Python >=3.10,<3.13 because "
+                "aiosqlite connection workers hang under the observed Python 3.13 stack"
+            )
+        else:
+            passes.append(f"MESA Python runtime {python_version} is supported")
         probe = subprocess.run(
             [str(python_bin), "-c", "import mesa_memory.runtime_entrypoint, mesa_mcp.gateway.app"],
             stdout=subprocess.PIPE,
