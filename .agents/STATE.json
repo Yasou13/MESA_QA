@@ -8,7 +8,7 @@
     "phase": "LIVE_ACCEPTANCE",
     "task": "MVP-002",
     "status": "BLOCKED_EXTERNAL",
-    "blocker": "The candidate now boots through a QA-owned Python 3.12.13 uv environment, but the real MESA process still exits with code 3 immediately after the final Alembic migration. Live Codex/MESA acceptance remains NOT_RUN."
+    "blocker": "Revalidation against updated MESA SHA 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4 proved and fixed a MESA-QA stale embedding-dimension override (384 vs MESA's configured 768). The fresh QA-owned Python 3.12.13 candidate still exits with Uvicorn code 3 after migrations; live acceptance remains NOT_RUN pending an exact remaining cause."
   },
   "safety": {
     "repair_enabled": false,
@@ -37,9 +37,9 @@
       "depends_on": ["MVP-001"],
       "files": ["src/mesa_qa/runtime/candidate_environment.py", "src/mesa_qa/runtime/process_manager.py", "src/mesa_qa/cli.py", "src/mesa_qa/controller.py"],
       "verification": ["focused candidate-environment tests", "real candidate startup", "compileall", "unit and integration suites"],
-      "evidence": ["Candidate Python is explicitly resolved from candidate.python_path/python_version and range-validated before bootstrap; 3.13.12 rejects before uv commands and 3.12 accepts.", "MESA's uv sync --locked --active --extra dev created /home/yasin/.local/share/mesa-qa/runs/test-live-1787002584/candidate-runtime/venv with Python 3.12.13; runtime, gateway, binding/admin, and repair tools use that same venv path.", "Real startup reached and completed the displayed Alembic migration sequence with the QA-owned Python 3.12 venv, then exited code 3; it did not reach healthy state.", "Focused Python 3.12 regression tests: 14 passed; post-fix focused reproduction/resume/candidate tests: 9 passed. Full integration: 6 passed, 1 skipped, 2 failed (live candidate code 3 plus a subsequently fixed dry-run reproduction assertion)."],
+      "evidence": ["Candidate Python is explicitly resolved from candidate.python_path/python_version and range-validated before bootstrap; 3.13.12 rejects before uv commands and 3.12 accepts.", "MESA's uv sync --locked --active --extra dev creates a per-run Python 3.12.13 environment; runtime, gateway, binding/admin, and repair tools use that same venv path.", "Updated MESA baseline: mvp/certification-round-5-fact-embedding @ 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4, clean at capture. A fresh candidate from that SHA again completed the displayed Alembic sequence then exited code 3 before health.", "Root-cause probe exposed MESA-QA's stale MESA_EMBEDDING_DIMENSION=384 override: MESA rejected active local embedding space 768 with ProjectionGenerationIdentityMismatchError. The override was removed and a regression test added; focused runtime/candidate tests: 9 passed. The remaining code-3 failure must still be traced before certification."],
       "commit": null,
-      "blocker": "Original Python 3.13 coupling is fixed, but the real MESA candidate still exits code 3 after its final Alembic migration while using the QA-owned Python 3.12.13 environment. No healthy runtime, MCP smoke, endurance, repair acceptance, or final audit may be marked PASS."
+      "blocker": "After correcting the proven stale MESA_EMBEDDING_DIMENSION launcher override, the candidate from updated SHA 7c1f812318a1c8aec22bd88939c63bbf35ffd9a4 still exits code 3 after migrations before health. No healthy runtime, MCP smoke, endurance, repair acceptance, or final audit may be marked PASS."
     },
     "MVP-003": {
       "title": "Executable production reproduction and regression handoff",
@@ -65,8 +65,8 @@
     "mesa_repo": "/home/yasin/Desktop/MESA",
     "mesa_qa_repo": "/home/yasin/Desktop/MESA_QA",
     "candidate_ref": null,
-    "candidate_sha": null,
-    "original_mesa_baseline": null
+    "candidate_sha": "7c1f812318a1c8aec22bd88939c63bbf35ffd9a4 (fresh revalidation target)",
+    "original_mesa_baseline": "branch=mvp/certification-round-5-fact-embedding; HEAD=7c1f812318a1c8aec22bd88939c63bbf35ffd9a4; status=clean"
   },
   "last_verified_commit": "7d6426e87dc1f7c4cef7809e0e41e6c01f7a938f (runtime-environment architecture; live acceptance remains blocked)"
 }

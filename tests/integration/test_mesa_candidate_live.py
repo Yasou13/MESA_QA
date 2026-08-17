@@ -1,5 +1,6 @@
 import pytest
 from pathlib import Path
+import subprocess
 
 from mesa_qa.config import QAConfig
 from mesa_qa.runtime.process_manager import ProcessManager
@@ -20,6 +21,14 @@ async def test_live_mesa_candidate_startup():
 
     cfg = QAConfig.load()
     cfg.mesa.repo_path = mesa_repo
+    updated_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=mesa_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    cfg.mesa.candidate_ref = updated_sha
     cfg.mesa.port = 19001
     cfg.mesa.gateway_port = 19765
     cfg.candidate.worktree_root = Path("/home/yasin/Desktop/MESA-QA-candidate")
@@ -35,6 +44,7 @@ async def test_live_mesa_candidate_startup():
     wt = pm.setup_worktree(run_id=run_id)
     assert wt.exists()
     assert wt != mesa_repo.resolve()
+    assert pm.candidate_base_sha == updated_sha
 
     try:
         await pm.start_all()

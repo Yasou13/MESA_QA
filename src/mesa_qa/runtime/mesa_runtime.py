@@ -68,7 +68,6 @@ class MesaCandidateRuntime:
             ),
             "MESA_LLM_PROVIDER": self.llm_provider,
             "MESA_EXTRACTION_PROVIDER": self.llm_provider,
-            "MESA_EMBEDDING_DIMENSION": "384",
             "MESA_PORT": str(self.port),
             "MESA_API_KEY": self.api_key,
             "MESA_PRINCIPAL_ID": self.principal_id,

@@ -112,3 +112,24 @@ async def test_mesa_runtime_unset_mode():
         env = call_kwargs["env"]
 
         assert "MESA_TIER3_MODE" not in env
+
+
+@pytest.mark.asyncio
+async def test_mesa_runtime_does_not_override_candidate_embedding_identity():
+    """MESA owns embedding dimensions; QA must not force a stale value."""
+    runtime = MesaCandidateRuntime(
+        candidate_worktree=Path("/tmp/fake_candidate"),
+        python_bin=Path("/tmp/fake_python"),
+        storage_root=Path("/tmp/fake_storage"),
+    )
+
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        mock_proc = AsyncMock()
+        mock_proc.pid = 9999
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+
+        await runtime.start()
+
+    env = mock_exec.call_args.kwargs["env"]
+    assert "MESA_EMBEDDING_DIMENSION" not in env
