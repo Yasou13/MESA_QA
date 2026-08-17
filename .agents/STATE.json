@@ -2,13 +2,13 @@
   "schema_version": 1,
   "project": "MESA-QA",
   "target": "MVP",
-  "overall_status": "BLOCKED_ENV",
+  "overall_status": "BLOCKED_EXTERNAL",
   "certification": "NO_GO",
   "current": {
-    "phase": "CERTIFICATION",
+    "phase": "LIVE_ACCEPTANCE",
     "task": "MVP-002",
-    "status": "BLOCKED_ENV",
-    "blocker": "Full pytest blocks in aiosqlite.connect() under the installed Python 3.13 environment. Live Codex/MESA acceptance is NOT_RUN."
+    "status": "BLOCKED_EXTERNAL",
+    "blocker": "The real MESA candidate exits with code 3 during startup migrations. Its configured Python 3.13 is unsupported by MESA-QA; live Codex/MESA acceptance is NOT_RUN."
   },
   "safety": {
     "repair_enabled": false,
@@ -22,41 +22,41 @@
     "MVP-001": {
       "title": "Fresh discovery and baseline verification",
       "phase": "DISCOVERY",
-      "status": "BLOCKED_ENV",
+      "status": "PASS",
       "depends_on": [],
       "files": [".agents/STATE.json", "src/mesa_qa/repair/verification.py", "src/mesa_qa/telemetry/reports.py"],
       "verification": ["compileall", "pytest collection", "targeted unit tests"],
-      "evidence": ["python -m compileall -q src tests (PASS)", "pytest --collect-only tests/unit: 205 collected (PASS)", "pytest tests/unit: BLOCKED at aiosqlite fixture setup", "pytest test_pre_fix_fail.py test_evidence_final_report.py: 13 passed"],
-      "commit": "336e97a4700751542e3008e73c86a242507df121",
-      "blocker": "Full pytest is blocked by an environment-level aiosqlite hang; live Codex/MESA evidence is NOT_RUN."
+      "evidence": ["Python 3.12.13 + aiosqlite 0.22.1 minimal file probe: PASS", "Python 3.12.13 full unit suite: 209 passed in 48.42s", "Python 3.13.12 full unit suite: timed out at 120s"],
+      "commit": "9a082e20db6fdf7c164688bf1b3124d3ddeeb414",
+      "blocker": null
     },
     "MVP-002": {
       "title": "Real live acceptance and independent certification",
       "phase": "CERTIFICATION",
-      "status": "BLOCKED_ENV",
+      "status": "BLOCKED_EXTERNAL",
       "depends_on": ["MVP-001"],
       "files": [],
       "verification": [],
       "evidence": [],
       "commit": null,
-      "blocker": "Requires a working MESA Python environment and authenticated Codex/MESA live execution."
+      "blocker": "Real candidate startup test failed: MESA process exited with code 3 while applying migrations. The bundled MESA virtual environment uses unsupported Python 3.13.12."
     },
     "MVP-003": {
       "title": "Executable production reproduction and regression handoff",
       "phase": "REPRODUCTION",
-      "status": "FAIL",
+      "status": "PASS",
       "depends_on": ["MVP-001"],
       "files": ["src/mesa_qa/controller.py", "src/mesa_qa/repair/evidence.py"],
-      "verification": [],
-      "evidence": ["Fresh audit: generated reproduce.py only reads evidence and prints a sequence; no real candidate execution command is produced."],
-      "commit": null,
-      "blocker": "P0 source gap: confirmed anomalies do not produce an executable live-MCP reproduction or a real pre-fix regression handoff."
+      "verification": ["tests/unit/test_reproduction_bundle.py", "tests/integration/test_production_reproduction_handoff.py"],
+      "evidence": ["Focused handoff tests: 3 passed in 3.58s", "A confirmed anomaly now materializes a candidate-contained live-MCP regression and sets pre_fix_test_file without test injection."],
+      "commit": "3117bec14f0ef4b403c04eec5d48e0395812dc78",
+      "blocker": null
     }
   },
   "acceptance": {
     "build_static_checks": "PASS",
-    "unit_tests": "BLOCKED",
-    "integration_tests": "NOT_RUN",
+    "unit_tests": "PASS",
+    "integration_tests": "FAIL",
     "live_mcp_acceptance": "NOT_RUN",
     "controlled_repair": "NOT_RUN",
     "independent_final_audit": "NOT_RUN"
@@ -68,5 +68,5 @@
     "candidate_sha": null,
     "original_mesa_baseline": null
   },
-  "last_verified_commit": "336e97a4700751542e3008e73c86a242507df121"
+  "last_verified_commit": "3117bec14f0ef4b403c04eec5d48e0395812dc78"
 }
