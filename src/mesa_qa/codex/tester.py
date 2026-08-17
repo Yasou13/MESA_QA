@@ -40,6 +40,11 @@ class TesterCodex:
         if gateway_url:
             self.gateway_url = gateway_url.rstrip("/")
 
+    @property
+    def launcher_prefix(self) -> List[str]:
+        """The QA-owned MESA launcher used for every real tester turn."""
+        return list(self._launcher_prefix or [])
+
     def rotate_thread(self) -> None:
         """Drop Codex conversation context; MESA data remains available through MCP."""
         self.thread_id = None

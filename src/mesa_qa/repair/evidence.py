@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any, Dict, List
 import logging
@@ -140,6 +141,13 @@ class EvidenceStore:
 """
         (bug_dir / "repro.md").write_text(repro_md, encoding="utf-8")
 
+        regression_command = exec_payload.get("regression_command")
+        executable_regression = (
+            isinstance(regression_command, list)
+            and regression_command
+            and all(isinstance(part, str) and part for part in regression_command)
+        )
+
         # 7. manifest.json
         manifest = {
             "bug_id": bug.bug_id,
@@ -159,59 +167,37 @@ class EvidenceStore:
                 "repro_execution.json",
                 "repro.md",
                 "manifest.json",
-                "reproduce.py",
-                "reproduce.sh",
             ],
         }
+        if executable_regression:
+            manifest["artifacts"].extend(["reproduce.py", "reproduce.sh"])
         (bug_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
         )
 
-        # 8. reproduce.py
-        reproduce_py = f"""#!/usr/bin/env python3
-# Standalone reproduction script for {bug.bug_id}
+        # 8. The replay entrypoints exist only when they execute the generated
+        # live-MCP regression. Evidence-only bundles intentionally have no
+        # executable entrypoint; printing saved JSON is not reproduction.
+        if executable_regression:
+            command_json = json.dumps(regression_command)
+            reproduce_py = f"""#!/usr/bin/env python3
 import json
+import subprocess
 import sys
-from pathlib import Path
 
-bundle_dir = Path(__file__).parent.resolve()
-manifest_file = bundle_dir / "manifest.json"
-seq_file = bundle_dir / "user_sequence.jsonl"
-
-print(f"=== Reproducing {{bundle_dir.name}} ===")
-if manifest_file.exists():
-    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    print(f"Strategy: {{manifest.get('reproduction_strategy')}}")
-    print(f"Candidate commit: {{manifest.get('candidate_commit_before')}}")
-
-if seq_file.exists():
-    with open(seq_file, "r", encoding="utf-8") as f:
-        steps = [json.loads(line) for line in f if line.strip()]
-    print(f"Loaded {{len(steps)}} reproduction step(s).")
-    for idx, step in enumerate(steps, 1):
-        print(f"Step {{idx}}: kind={{step.get('kind')}}, text={{step.get('text', '')[:60]}}")
-print("Reproduction sequence ready.")
+COMMAND = json.loads({command_json!r})
+raise SystemExit(subprocess.run(COMMAND, check=False).returncode)
 """
-        (bug_dir / "reproduce.py").write_text(reproduce_py, encoding="utf-8")
-        try:
-            (bug_dir / "reproduce.py").chmod(0o755)
-        except Exception:
-            pass
-
-        # 9. reproduce.sh
-        reproduce_sh = f"""#!/usr/bin/env bash
-# Standalone reproduction execution entrypoint for {bug.bug_id}
-set -euo pipefail
-
-DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
-echo "=== Running Standalone Reproduction for {bug.bug_id} ==="
-python3 "$DIR/reproduce.py"
-"""
-        (bug_dir / "reproduce.sh").write_text(reproduce_sh, encoding="utf-8")
-        try:
-            (bug_dir / "reproduce.sh").chmod(0o755)
-        except Exception:
-            pass
+            (bug_dir / "reproduce.py").write_text(reproduce_py, encoding="utf-8")
+            reproduce_sh = "#!/usr/bin/env bash\nset -euo pipefail\nexec " + " ".join(
+                shlex.quote(part) for part in regression_command
+            ) + "\n"
+            (bug_dir / "reproduce.sh").write_text(reproduce_sh, encoding="utf-8")
+            for name in ("reproduce.py", "reproduce.sh"):
+                try:
+                    (bug_dir / name).chmod(0o755)
+                except OSError:
+                    logger.warning("Could not make %s executable", bug_dir / name)
 
         logger.info("Evidence bundle created for %s at %s", bug.bug_id, bug_dir)
         return bug_dir

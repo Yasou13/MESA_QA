@@ -18,6 +18,7 @@ from mesa_qa.repair.evidence import EvidenceStore
 from mesa_qa.repair.gate import RepairGate
 from mesa_qa.repair.policy import RepairPolicyGuard
 from mesa_qa.repair.verification import RepairVerifier
+from mesa_qa.repair.reproduction import ProductionReproducer
 from mesa_qa.runtime.process_manager import ProcessManager
 from mesa_qa.scenario.engine import ScenarioEngine
 from mesa_qa.state_machine import State, StateMachine
@@ -96,6 +97,7 @@ class QAController:
         self.repair_gate = RepairGate(self.policy_guard)
         self.evidence_store = EvidenceStore(self.run_dir)
         self.repair_verifier = RepairVerifier(python_bin=config.mesa.python_path)
+        self.reproducer = ProductionReproducer()
         self.sampler = ResourceSampler(
             self.run_dir,
             warn_rss_mb=config.resources.warn_rss_mb,
@@ -1057,6 +1059,16 @@ class QAController:
         severity, category = self.classifier.classify(verdict, event.kind.value)
         bug_id = f"BUG-{len(self._bugs)+1:04d}"
 
+        candidate_worktree = self.process_mgr.candidate_worktree
+        candidate_head = str(self.process_mgr.candidate_branch or "")
+        if candidate_worktree and candidate_worktree.exists():
+            try:
+                candidate_head = self.process_mgr.worktree_mgr._run_git(
+                    candidate_worktree, ["rev-parse", "HEAD"]
+                ).strip()
+            except Exception:
+                logger.exception("Could not resolve candidate SHA for %s", bug_id)
+
         bug = BugReport(
             bug_id=bug_id,
             run_id=self.run_id,
@@ -1069,14 +1081,38 @@ class QAController:
             expected={"expected": verdict.expected},
             actual={"actual": verdict.actual},
             repeat_count=2,
-            candidate_commit_before=str(self.process_mgr.candidate_branch),
+            candidate_commit_before=candidate_head,
         )
+
+        repro_spec: Dict[str, Any] = {}
+        if candidate_worktree and candidate_worktree.exists():
+            try:
+                regression_path, spec_path, repro_spec = self.reproducer.materialize(
+                    bug=bug,
+                    event=recheck_event,
+                    candidate_worktree=candidate_worktree,
+                    tester_workspace=self.run_dir / "tester_workspace",
+                    launcher_prefix=self.tester.launcher_prefix,
+                    codex_binary=self.config.codex.binary,
+                    gateway_url=self.tester.gateway_url,
+                    timeout_seconds=self.config.codex.tester_timeout_seconds,
+                )
+                bug.preconditions.update(
+                    {
+                        "pre_fix_test_file": regression_path,
+                        "reproduction_spec": str(spec_path),
+                        "reproduction_command": repro_spec["reproduction_command"],
+                    }
+                )
+            except Exception as exc:
+                bug.preconditions["reproduction_error"] = str(exc)
+                logger.exception("Could not materialize production reproduction for %s", bug_id)
 
         repro_execution_data = {
             "status": "CONFIRMED_ANOMALY",
             "reproduced": True,
             "strategy": repro_strategy,
-            "candidate_commit": str(self.process_mgr.candidate_branch),
+            "candidate_commit": candidate_head,
             "recheck_action_id": recheck_action_id,
             "first_verdict": {
                 "category": verdict.category,
@@ -1092,6 +1128,22 @@ class QAController:
             },
             "executed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if repro_spec:
+            repro_execution_data.update(
+                {
+                    "candidate_worktree": str(candidate_worktree),
+                    "reproduction_spec": str(bug.preconditions["reproduction_spec"]),
+                    "required_mcp_tool": repro_spec["required_mcp_tool"],
+                    "actual_reproduction_command": repro_spec["reproduction_command"],
+                    "regression_path": bug.preconditions["pre_fix_test_file"],
+                    "regression_command": [
+                        str(self.config.mesa.python_path),
+                        "-m",
+                        "pytest",
+                        bug.preconditions["pre_fix_test_file"],
+                    ],
+                }
+            )
 
         # Create Evidence Bundle
         bundle_dir = self.evidence_store.create_bundle(
