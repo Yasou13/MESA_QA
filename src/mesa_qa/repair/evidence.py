@@ -32,6 +32,16 @@ class EvidenceStore:
         temporary.replace(path)
         return path
 
+    def read_json_records(self, filename: str) -> List[Dict[str, Any]]:
+        """Read lightweight JSON evidence records."""
+        path = self.evidence_dir / filename
+        if not path.exists():
+            return []
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, list):
+            return loaded
+        return []
+
     def create_bundle(
         self,
         bug: BugReport,
@@ -70,6 +80,7 @@ class EvidenceStore:
 - **Category**: {bug.category}
 - **First Seen At**: {bug.first_seen_at}
 - **Candidate Commit**: {bug.candidate_commit_before}
+- **Reproduction Strategy**: {bug.reproduction_strategy}
 
 ## Steps to Reproduce
 """
@@ -88,6 +99,78 @@ class EvidenceStore:
 ```
 """
         (bug_dir / "repro.md").write_text(repro_md, encoding="utf-8")
+
+        # 6. manifest.json
+        manifest = {
+            "bug_id": bug.bug_id,
+            "run_id": bug.run_id,
+            "severity": bug.severity.value,
+            "category": bug.category,
+            "scenario_id": bug.scenario_id,
+            "reproduction_strategy": bug.reproduction_strategy,
+            "candidate_commit_before": bug.candidate_commit_before,
+            "first_seen_at": bug.first_seen_at,
+            "step_count": len(user_sequence),
+            "artifacts": [
+                "bug.json",
+                "user_sequence.jsonl",
+                "expected.json",
+                "actual.json",
+                "repro.md",
+                "manifest.json",
+                "reproduce.py",
+                "reproduce.sh",
+            ],
+        }
+        (bug_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+
+        # 7. reproduce.py
+        reproduce_py = f"""#!/usr/bin/env python3
+# Standalone reproduction script for {bug.bug_id}
+import json
+import sys
+from pathlib import Path
+
+bundle_dir = Path(__file__).parent.resolve()
+manifest_file = bundle_dir / "manifest.json"
+seq_file = bundle_dir / "user_sequence.jsonl"
+
+print(f"=== Reproducing {{bundle_dir.name}} ===")
+if manifest_file.exists():
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    print(f"Strategy: {{manifest.get('reproduction_strategy')}}")
+    print(f"Candidate commit: {{manifest.get('candidate_commit_before')}}")
+
+if seq_file.exists():
+    with open(seq_file, "r", encoding="utf-8") as f:
+        steps = [json.loads(line) for line in f if line.strip()]
+    print(f"Loaded {{len(steps)}} reproduction step(s).")
+    for idx, step in enumerate(steps, 1):
+        print(f"Step {{idx}}: kind={{step.get('kind')}}, text={{step.get('text', '')[:60]}}")
+print("Reproduction sequence ready.")
+"""
+        (bug_dir / "reproduce.py").write_text(reproduce_py, encoding="utf-8")
+        try:
+            (bug_dir / "reproduce.py").chmod(0o755)
+        except Exception:
+            pass
+
+        # 8. reproduce.sh
+        reproduce_sh = f"""#!/usr/bin/env bash
+# Standalone reproduction execution entrypoint for {bug.bug_id}
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+echo "=== Running Standalone Reproduction for {bug.bug_id} ==="
+python3 "$DIR/reproduce.py"
+"""
+        (bug_dir / "reproduce.sh").write_text(reproduce_sh, encoding="utf-8")
+        try:
+            (bug_dir / "reproduce.sh").chmod(0o755)
+        except Exception:
+            pass
 
         logger.info("Evidence bundle created for %s at %s", bug.bug_id, bug_dir)
         return bug_dir
