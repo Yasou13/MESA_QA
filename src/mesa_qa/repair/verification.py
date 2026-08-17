@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Tuple
@@ -29,7 +30,14 @@ class RepairVerifier:
     def verify_pre_fix_failure(self, candidate_worktree: Path, test_file_rel: str) -> Tuple[bool, str]:
         """Verify that a genuine source-path regression exists and demonstrably fails before fix."""
         candidate_worktree = Path(candidate_worktree).resolve()
-        target_path = candidate_worktree / test_file_rel
+        requested_path = Path(test_file_rel)
+        if requested_path.is_absolute():
+            return False, f"Pre-fix regression path must be relative to the candidate: {test_file_rel}"
+        target_path = (candidate_worktree / requested_path).resolve()
+        try:
+            target_path.relative_to(candidate_worktree)
+        except ValueError:
+            return False, f"Pre-fix regression path escapes candidate worktree: {test_file_rel}"
         if not target_path.is_file():
             return False, f"Pre-fix regression file not found: {test_file_rel}"
 
@@ -37,13 +45,39 @@ class RepairVerifier:
         if not content.strip():
             return False, f"Pre-fix regression file is empty: {test_file_rel}"
 
-        # Disallow synthetic pseudo-tests
-        if "captured_expected == captured_actual" in content or "assert True" == content.strip():
+        # A failed process alone does not prove pytest collected and exercised a
+        # product assertion. Reject pseudo-tests before invoking the candidate.
+        if (
+            "captured_expected == captured_actual" in content
+            or "assert True" == content.strip()
+            or not re.search(r"\b(?:async\s+)?def\s+test_[A-Za-z0-9_]+\s*\(", content)
+        ):
             return False, f"Refusing pseudo-test or pre-generated PASS assertion in {test_file_rel}"
 
-        passed, output = self.run_pytest_on_file(candidate_worktree, test_file_rel)
-        if passed:
+        cmd = [str(self.python_bin), "-m", "pytest", "-vv", test_file_rel]
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            cmd, cwd=candidate_worktree, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, check=False, env=env,
+        )
+        output = result.stdout + "\n" + result.stderr
+        if result.returncode == 0:
             return False, f"Test unexpectedly PASSED before fix; genuine PRE-FIX FAIL required.\n{output}"
+        if result.returncode in {2, 3, 4, 5}:
+            return False, (
+                "PRE-FIX command did not execute a product regression "
+                f"(pytest return code {result.returncode}).\n{output}"
+            )
+        collected = re.search(r"collected\s+(\d+)\s+item", output)
+        failed_test = re.search(rf"FAILED\s+{re.escape(test_file_rel)}(?:::|\s)", output)
+        assertion_failure = "AssertionError" in output or re.search(
+            rf"FAILED\s+{re.escape(test_file_rel)}.*\s-\s+assert\s+", output,
+        )
+        if not collected or int(collected.group(1)) < 1 or not failed_test or not assertion_failure:
+            return False, (
+                "PRE-FIX command failed without proving collection, execution, and "
+                f"an expected assertion failure in {test_file_rel}.\n{output}"
+            )
 
         logger.info("Genuine PRE-FIX FAIL confirmed for %s", test_file_rel)
         return True, output

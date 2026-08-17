@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+import sys
 import pytest
 
 from mesa_qa.repair.verification import RepairVerifier
@@ -43,11 +43,30 @@ def test_pre_fix_unexpected_pass_rejected(tmp_path):
 
 
 def test_pre_fix_genuine_fail_accepted(tmp_path):
-    verifier = RepairVerifier(python_bin=Path("/bin/false"))
+    verifier = RepairVerifier(python_bin=Path(sys.executable))
     
     real_test = tmp_path / "test_real.py"
     real_test.write_text("def test_real(): assert 1 == 2", encoding="utf-8")
     
-    # /bin/false returns 1 (fail)
     ok, msg = verifier.verify_pre_fix_failure(tmp_path, "test_real.py")
     assert ok
+
+
+def test_pre_fix_non_pytest_failure_is_rejected(tmp_path):
+    verifier = RepairVerifier(python_bin=Path("/bin/false"))
+    real_test = tmp_path / "test_real.py"
+    real_test.write_text("def test_real(): assert 1 == 2", encoding="utf-8")
+
+    ok, msg = verifier.verify_pre_fix_failure(tmp_path, "test_real.py")
+
+    assert not ok
+    assert "without proving collection" in msg
+
+
+def test_pre_fix_path_escape_is_rejected(tmp_path):
+    verifier = RepairVerifier(python_bin=Path(sys.executable))
+
+    ok, msg = verifier.verify_pre_fix_failure(tmp_path, "../outside.py")
+
+    assert not ok
+    assert "escapes candidate" in msg

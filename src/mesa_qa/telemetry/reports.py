@@ -108,6 +108,17 @@ class ReportBuilder:
         verdict = self.derive_session_verdict(run_state, bugs, repairs)
         evidence = self.discover_evidence_artifacts()
 
+        main_integrity = run_state.get("main_integrity_status", "UNVERIFIED")
+        if main_integrity == "UNVERIFIED" and (
+            self.run_dir / "evidence" / "main_baseline.json"
+        ).exists():
+            main_integrity = "RECORDED_BASELINE"
+        storage_isolation = run_state.get("storage_isolation_status", "UNVERIFIED")
+        repair_assurance = "NOT_RUN" if not repairs else (
+            "PASS" if all(r.get("status") in {"VERIFIED", "REPAIRED"} for r in repairs)
+            else "FAIL"
+        )
+
         verified_repairs = [r for r in repairs if r.get("status") == "VERIFIED"]
         failed_repairs = [r for r in repairs if r.get("status") in ("REPAIR_FAILED", "LIVE_REPRO_FAILED", "POLICY_VIOLATION")]
 
@@ -128,6 +139,11 @@ class ReportBuilder:
                 "base_sha": run_state.get("candidate_base_sha"),
                 "head": run_state.get("candidate_head"),
                 "baseline_main_head": run_state.get("baseline_main_head"),
+            },
+            "safety_gates": {
+                "main_integrity": main_integrity,
+                "storage_isolation": storage_isolation,
+                "repair_assurance": repair_assurance,
             },
             "bugs": bugs,
             "repairs": repairs,
@@ -153,11 +169,11 @@ class ReportBuilder:
 | Metric | Value | Status |
 |---|---|---|
 | Total Actions Executed | {run_state.get('action_count', 0)} | {'PASS' if run_state.get('action_count', 0) > 0 else 'NOT_RUN'} |
-| Tester Epochs Completed | {run_state.get('current_epoch', 0)} | PASS |
+| Tester Epochs Completed | {run_state.get('current_epoch', 0)} | {'PASS' if run_state.get('current_epoch', 0) > 0 else 'NOT_RUN'} |
 | Confirmed Bugs Discovered | {len(bugs)} | {'PASS (0 defects)' if len(bugs) == 0 else 'ALERT'} |
-| Verified Repairs Applied | {len(verified_repairs)} | PASS |
-| Failed / Rejected Repairs | {len(failed_repairs)} | {'OK' if len(failed_repairs) == 0 else 'FAIL'} |
-| Main Checkout Integrity | UNCHANGED | PASS |
+| Verified Repairs Applied | {len(verified_repairs)} | {'PASS' if verified_repairs else 'NOT_RUN'} |
+| Failed / Rejected Repairs | {len(failed_repairs)} | {'PASS' if len(failed_repairs) == 0 else 'FAIL'} |
+| Main Checkout Integrity | {main_integrity} | {main_integrity} |
 
 ### Confirmed Defects & Repairs
 """
@@ -177,11 +193,10 @@ class ReportBuilder:
             else:
                 md_content += f"- **{art_name}**: {art_info}\n"
 
-        md_content += "\n### Safety & Isolation Guarantees\n"
-        md_content += "- **MESA main checkout**: Guaranteed read-only / unchanged baseline asserted.\n"
-        md_content += "- **Candidate isolation**: Dedicated Git worktree and separate runtime environment.\n"
-        md_content += "- **QA storage**: Isolated from normal MESA user storage.\n"
-        md_content += "- **Autonomous repair**: Bounded, pre-fix fail verified, gate-checked, and live-rechecked.\n"
+        md_content += "\n### Safety Gate Evidence\n"
+        md_content += f"- **MESA main checkout integrity**: {main_integrity}.\n"
+        md_content += f"- **QA storage isolation**: {storage_isolation}.\n"
+        md_content += f"- **Repair assurance**: {repair_assurance}.\n"
 
         md_path.write_text(md_content, encoding="utf-8")
 

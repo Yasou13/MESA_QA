@@ -92,6 +92,8 @@ def test_generate_final_report_outputs(tmp_path):
     assert report_json["session_verdict"] == "PASS"
     assert report_json["summary"]["total_actions"] == 100
     assert report_json["summary"]["verified_repairs"] == 1
+    assert report_json["safety_gates"]["main_integrity"] == "UNVERIFIED"
+    assert report_json["safety_gates"]["repair_assurance"] == "PASS"
     assert "controller.log" in report_json["evidence_artifacts"]
     assert "BUG-01" in report_json["evidence_artifacts"]["reproduction_bundles"]
 
@@ -100,3 +102,4 @@ def test_generate_final_report_outputs(tmp_path):
     assert "run-rpt-01" in md_content
     assert "06ebd35a5dc43b75c33351705ddf4afa0a732c61" in md_content
     assert "controller.log" in md_content
+    assert "MESA main checkout integrity**: UNVERIFIED" in md_content
