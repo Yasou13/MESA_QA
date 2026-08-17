@@ -1,0 +1,16 @@
+{
+  "task": "S042",
+  "title": "Keep autonomous repair disabled in shipped profiles",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_shipped_profiles_repair_disabled.py",
+      "exit_code": 0,
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Enforced repair.enabled: false across all shipped profiles (default.yaml, lite.yaml, standard.yaml) preventing uncertified autonomous repair execution."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "task": "S013",
+  "title": "Add run-scoped control commands",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_run_scoped_control.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Added explicit --run-id argument to pause, resume, and stop CLI subcommands.",
+    "_cmd_control explicitly targets the requested run_id database directly without relying on newest-directory heuristics.",
+    "Targeting a missing or invalid run_id raises an explicit error and fails closed."
+  ]
+}

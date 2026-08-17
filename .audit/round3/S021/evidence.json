@@ -1,0 +1,17 @@
+{
+  "task": "S021",
+  "title": "Fix historical query semantics",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_historical_query.py",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Implemented OracleDB.get_historical_facts(entity, field) to query only status='HISTORICAL' facts.",
+    "Updated OracleEvaluator for mode='historical' to evaluate against get_historical_facts, preventing current corrected facts from polluting expected historical results."
+  ]
+}

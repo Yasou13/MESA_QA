@@ -1,0 +1,21 @@
+{
+  "task": "S046",
+  "title": "Run 5 to 10 minute engineering smoke",
+  "status": "PASS",
+  "run_id": "qa-20260816-230952-de2fc655",
+  "profile": "lite",
+  "duration_minutes": 5.0,
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/python -m mesa_qa.cli run --profile lite --minutes 5",
+      "exit_code": 0,
+      "run_id": "qa-20260816-230952-de2fc655"
+    }
+  ],
+  "notes": [
+    "Executed 5-minute engineering smoke test with real MESA venv, real Codex execution in read-only sandbox, and real MCP gateway tools.",
+    "Autonomous repair remained strictly disabled (repair.enabled: false).",
+    "Candidate anomaly detection triggered recheck, reproduction, and evidence bundle creation (BUG-0001).",
+    "Graceful teardown verified with zero parent log descriptor leaks and main repository immutability fully asserted."
+  ]
+}

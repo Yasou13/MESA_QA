@@ -1,0 +1,17 @@
+{
+  "task": "S039",
+  "title": "Implement real run status command",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_status_command.py",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Implemented get_full_status, get_latest_action, and list_bugs in ControllerDB.",
+    "Wired mesa-qa status CLI command with human-readable structured reporting and --json support covering run state, candidate identity, process PIDs, active action progress, last action details, blockers, and bug/repair summaries."
+  ]
+}

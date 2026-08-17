@@ -1,0 +1,17 @@
+{
+  "task": "S043",
+  "title": "Remove or implement dead stress-behavioral profile",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_profile_contract.py",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Implemented config/stress-behavioral.yaml with explicit short cadences (5s-15s) and strict repair.enabled: false.",
+    "Updated QAConfig.load to raise FileNotFoundError when non-existent profiles are requested, preventing silent fallback to default."
+  ]
+}

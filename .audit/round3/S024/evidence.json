@@ -1,0 +1,18 @@
+{
+  "task": "S024",
+  "title": "Remove or wire dead configuration",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_config_wiring.py",
+      "exit_code": 0,
+      "passed": 4,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Removed unused dead configuration fields (candidate.reuse_existing, run.epoch_actions, run.restart_every_minutes, run.parallel_actions).",
+    "Wired CodexSettings (tester_model, repair_model, json_events, tester_timeout_seconds, repair_timeout_seconds) to TesterCodex, RepairerCodex, and CodexRunner.",
+    "Added RepairVerifier.run_full_suite to support whole-suite verification runs."
+  ]
+}

@@ -43,3 +43,8 @@ candidate/
 logs/
 *.db
 *.sqlite
+
+# Agent State & Tasks
+.agents/
+.audit/
+.benchmarks

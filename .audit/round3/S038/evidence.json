@@ -1,0 +1,17 @@
+{
+  "task": "S038",
+  "title": "Implement safe teardown",
+  "status": "PASS",
+  "verification": [
+    {
+      "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_safe_teardown.py",
+      "exit_code": 0,
+      "passed": 6,
+      "failed": 0
+    }
+  ],
+  "notes": [
+    "Implemented safe teardown validation in WorktreeManager and ProcessManager.",
+    "Validated symlink rejection, containment within candidate_root, main repo/root/home collision prevention, git common-dir identity, and protected/unprefixed branch deletion protection."
+  ]
+}
