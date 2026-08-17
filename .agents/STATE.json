@@ -1,0 +1,1692 @@
+{
+  "schema_version": "1.0",
+  "project": "MESA-QA",
+  "round": "round-3-hardening",
+  "overall_status": "COMPLETED",
+  "certification": "GO",
+  "mission": "Turn the current MESA-QA snapshot into a detachable, evidence-driven resident QA engineer that tests MESA through the real Codex/MCP lifecycle and only performs bounded candidate-only repair after a genuine reproducible bug is proven.",
+  "source_of_truth": {
+    "state_file": ".agents/STATE.json",
+    "audit_baseline": [
+      "MESA_QA_CURRENT_SNAPSHOT_FINAL_COMPLETION_REPORT_2026-08-16.md",
+      "MESA_QA_SECOND_SCAN_INDEPENDENT_AUDIT_2026-08-16.md"
+    ]
+  },
+  "safety": {
+    "repair_enabled": true,
+    "repair_unlock_gate": "A44",
+    "original_mesa_write_allowed": false,
+    "original_mesa_checkout_switch_allowed": false,
+    "auto_push_allowed": false,
+    "auto_merge_allowed": false,
+    "paid_provider_allowed": false,
+    "silent_fallback_allowed": false,
+    "skip_failed_gate_allowed": false,
+    "fabricated_evidence_allowed": false
+  },
+  "repositories": {
+    "mesa_qa": {
+      "access": "read_write",
+      "expected_branch": "qa/round3-hardening",
+      "head": "2f7886358bbaddadf73805abc7dbc68c399d531b"
+    },
+    "mesa": {
+      "access": "read_only_except_candidate_worktree",
+      "original_checkout_write_allowed": false,
+      "candidate_ref": null,
+      "candidate_base_sha": null,
+      "candidate_worktree": null,
+      "candidate_branch": null
+    }
+  },
+  "execution_policy": {
+    "max_parallel_tasks": 1,
+    "task_selection": "dependency_order",
+    "require_test_before_pass": true,
+    "require_evidence_before_pass": true,
+    "require_commit_before_pass": true,
+    "critical_failures_fail_closed": true,
+    "blocked_external_no_workaround": true
+  },
+  "task_status_values": [
+    "PENDING",
+    "READY",
+    "IN_PROGRESS",
+    "PASS",
+    "FAIL",
+    "BLOCKED",
+    "BLOCKED_EXTERNAL",
+    "SKIPPED_BY_CONTRACT"
+  ],
+  "gate_status_values": [
+    "NOT_RUN",
+    "PASS",
+    "FAIL",
+    "BLOCKED"
+  ],
+  "current": {
+    "phase": "F6",
+    "task": "S050",
+    "status": "PASS",
+    "blocker": null,
+    "started_at": null
+  },
+  "phases": {
+    "F0": {
+      "name": "MESA dependency and candidate pinning",
+      "status": "PASS",
+      "tasks": [
+        "S001",
+        "S002",
+        "S003",
+        "S004"
+      ]
+    },
+    "F1": {
+      "name": "Tester authenticity",
+      "status": "PASS",
+      "tasks": [
+        "S005",
+        "S006",
+        "S007",
+        "S008"
+      ]
+    },
+    "F2": {
+      "name": "Controller durability",
+      "status": "PASS",
+      "tasks": [
+        "S009",
+        "S010",
+        "S011",
+        "S012",
+        "S013",
+        "S014",
+        "S015",
+        "S016",
+        "S017",
+        "S018"
+      ]
+    },
+    "F3": {
+      "name": "Oracle and endurance correctness",
+      "status": "PASS",
+      "tasks": [
+        "S019",
+        "S020",
+        "S021",
+        "S022",
+        "S023",
+        "S024",
+        "S025"
+      ]
+    },
+    "F4": {
+      "name": "Autonomous repair proof chain",
+      "status": "PASS",
+      "tasks": [
+        "S026",
+        "S027",
+        "S028",
+        "S029",
+        "S030",
+        "S031",
+        "S032",
+        "S033",
+        "S034",
+        "S035",
+        "S036",
+        "S037"
+      ]
+    },
+    "F5": {
+      "name": "Operator, detachability and reporting",
+      "status": "PASS",
+      "tasks": [
+        "S038",
+        "S039",
+        "S040",
+        "S041",
+        "S042",
+        "S043",
+        "S044",
+        "S045"
+      ]
+    },
+    "F6": {
+      "name": "Live acceptance and certification",
+      "status": "PASS",
+      "tasks": [
+        "S046",
+        "S047",
+        "S048",
+        "S049",
+        "S050"
+      ]
+    }
+  },
+  "tasks": {
+    "S001": {
+      "title": "Verify official MESA 0/1/2 validation contract",
+      "phase": "F0",
+      "repo": "mesa",
+      "mode": "read_only",
+      "depends_on": [],
+      "status": "PASS",
+      "required_result": "Determine from MESA source/config whether official validation modes 0, 1 and 2 exist and identify their exact public configuration contract.",
+      "fail_rule": "If the official contract does not exist, set BLOCKED_EXTERNAL. Do not implement a shadow validator inside MESA-QA.",
+      "evidence": [
+        ".audit/round3/S001/mesa_validation_contract.json"
+      ],
+      "verification": [
+        {
+          "command": "/home/yasin/Desktop/MESA/.venv/bin/pytest /home/yasin/Desktop/MESA/tests/test_r4_validation_mode_contract.py /home/yasin/Desktop/MESA/tests/test_r4_validation_policy.py /home/yasin/Desktop/MESA/tests/test_r4_durable_policy_snapshot.py /home/yasin/Desktop/MESA/tests/test_r4_extraction_validation_independence.py /home/yasin/Desktop/MESA/tests/test_r4_validation_state_machine.py /home/yasin/Desktop/MESA/tests/test_r4_validation_e2e.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "15ffcd2b23bcdc994ea4acffb7e6768393040c55"
+    },
+    "S002": {
+      "title": "Wire MESA-QA to official MESA validation mode",
+      "phase": "F0",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S001"
+      ],
+      "status": "PASS",
+      "required_result": "MESA-QA selects the official MESA validation mode without implementing validation policy itself.",
+      "evidence": [
+        ".audit/round3/S002/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_config.py tests/unit/test_mesa_runtime_validation.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "3275843a16d02b851029a7b4fb6ef2fbb59c1013"
+    },
+    "S003": {
+      "title": "Add mesa.candidate_ref exact pinning",
+      "phase": "F0",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S001"
+      ],
+      "status": "PASS",
+      "required_result": "Resolve branch, tag or SHA read-only and create candidate from the exact resolved commit without switching the original checkout.",
+      "evidence": [
+        ".audit/round3/S003/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_worktree_pinning.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "6afead2a2eaa9958e61ae53326307ac76cd563c7"
+    },
+    "S004": {
+      "title": "Remove hard-coded candidate SHA assumptions",
+      "phase": "F0",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S003"
+      ],
+      "status": "PASS",
+      "required_result": "All live assertions derive expected candidate identity from config and runtime evidence.",
+      "evidence": [
+        ".audit/round3/S004/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_candidate_identity.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "844c57dbfcb22e4c0a00f660ecceda5a1481800b"
+    },
+    "S005": {
+      "title": "Strict Tester action and scenario identity validation",
+      "phase": "F1",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S004"
+      ],
+      "status": "PASS",
+      "required_result": "Returned action_id and scenario_event_id must exactly match the expected action.",
+      "tests_required": [
+        "stale action_id rejected",
+        "wrong scenario_event_id rejected",
+        "missing identity rejected"
+      ],
+      "evidence": [
+        ".audit/round3/S005/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_tester.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "53d12cf869329caab3884ae5b1750d754943f332"
+    },
+    "S006": {
+      "title": "Independently prove real MCP invocation",
+      "phase": "F1",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S005"
+      ],
+      "status": "PASS",
+      "required_result": "Expected MCP tool equals independently observed real MCP invocation. Tester self-report is non-authoritative.",
+      "evidence": [
+        ".audit/round3/S006/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_tester.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "12b688a1392cbbf2a7739050ea6470fab31ac794"
+    },
+    "S007": {
+      "title": "Fix deterministic recall correctness matcher",
+      "phase": "F1",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S006"
+      ],
+      "status": "PASS",
+      "required_result": "Structured MESA result first, deterministic fallback second, ambiguous or negated result becomes NEEDS_REVIEW instead of PASS.",
+      "tests_required": [
+        "FastAPI vs 'does not use FastAPI' must not PASS",
+        "normalized true positive PASS",
+        "ambiguous response not PASS"
+      ],
+      "evidence": [
+        ".audit/round3/S007/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_judge.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "12bc3d0c8265ca21cec38bb3efb934390e88c989"
+    },
+    "S008": {
+      "title": "Make thread rotation a hard evidence gate",
+      "phase": "F1",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S007"
+      ],
+      "status": "PASS",
+      "required_result": "Rotation is PASS only after old thread exists, new thread exists, IDs differ and fresh-thread recall succeeds through verified MESA MCP.",
+      "evidence": [
+        ".audit/round3/S008/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_thread_rotation_gate.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "f14e483e6fb19ee143bc0d96cc2b628fb2f92801"
+    },
+    "S009": {
+      "title": "Allow confirmed bug continuation when repair is disabled",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S008"
+      ],
+      "status": "PASS",
+      "required_result": "CONFIRMED_BUG to RUNNING is valid when repair is disabled or gated.",
+      "evidence": [
+        ".audit/round3/S009/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_confirmed_bug_continuation.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "16a16d1b5942cfea9bd2e8a791354e6c86df43a3"
+    },
+    "S010": {
+      "title": "Make critical state persistence awaited",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S009"
+      ],
+      "status": "PASS",
+      "required_result": "WAITING_FOR_CODEX, PAUSED, STOPPING, COMPLETED and FAILED cannot rely on fire-and-forget persistence.",
+      "evidence": [
+        ".audit/round3/S010/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_state_persistence_awaited.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "607afcd24121ba99193ead707afc6e06a2f35766"
+    },
+    "S011": {
+      "title": "Correct persisted immutable and candidate metadata",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S010"
+      ],
+      "status": "PASS",
+      "required_result": "started_at is immutable and candidate path, base SHA and current HEAD are stored in distinct correct fields.",
+      "evidence": [
+        ".audit/round3/S011/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_persisted_metadata.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "208ec39b7e62da38e28a50ec079ca6500746f11b"
+    },
+    "S012": {
+      "title": "Guarantee unique run IDs",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S010"
+      ],
+      "status": "PASS",
+      "required_result": "Run ID includes actual date and random/UUID suffix and collisions fail closed at filesystem/control-state boundaries.",
+      "evidence": [
+        ".audit/round3/S012/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_unique_run_id.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "9598aaf7fb63311da87ea39cb8ab22d08a5691e8"
+    },
+    "S013": {
+      "title": "Add run-scoped control commands",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S012"
+      ],
+      "status": "PASS",
+      "required_result": "pause, resume and stop support explicit --run-id and do not rely on newest-directory heuristics.",
+      "evidence": [
+        ".audit/round3/S013/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_run_scoped_control.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "2a8258ef988282378760cecee8d1e207f20484ba"
+    },
+    "S014": {
+      "title": "Poll control DB while paused",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S013"
+      ],
+      "status": "PASS",
+      "required_result": "Paused controller observes resume and stop requests and consumes/acknowledges control requests.",
+      "evidence": [
+        ".audit/round3/S014/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_pause_control_polling.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "8d3c4011e3b301515a6bbc688b54004fa9c7dea5"
+    },
+    "S015": {
+      "title": "Implement active-action emergency cancellation",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S014"
+      ],
+      "status": "PASS",
+      "required_result": "Stop can cancel active Tester Codex, Repair Codex and approval polling and safely persist evidence.",
+      "evidence": [
+        ".audit/round3/S015/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_emergency_cancellation.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "1a348d3ac2e53efe9d5e7d51ec8608e726cc2b42"
+    },
+    "S016": {
+      "title": "Implement crash resume",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S010",
+        "S011",
+        "S013"
+      ],
+      "status": "PASS",
+      "required_result": "Persisted cursor, epoch, seed, action counter, thread metadata and candidate identity are restored and validated before continuation.",
+      "evidence": [
+        ".audit/round3/S016/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_crash_resume.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "977574da0e9dcd2f581dcb2eafc7ea523aab1a21"
+    },
+    "S017": {
+      "title": "Add top-level exception cleanup",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S010"
+      ],
+      "status": "PASS",
+      "required_result": "Unexpected initialization/runtime exceptions persist FAILED, terminate owned child processes and verify original MESA integrity.",
+      "evidence": [
+        ".audit/round3/S017/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_exception_cleanup.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "7ed29fc25efa8be310fc80a5008d570d1bd0e753"
+    },
+    "S018": {
+      "title": "Implement background process-tree resource hard-stop",
+      "phase": "F2",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S015",
+        "S017"
+      ],
+      "status": "PASS",
+      "required_result": "resources.sample_seconds is honored and process-tree hard limits trigger STOPPING and active-action cancellation.",
+      "evidence": [
+        ".audit/round3/S018/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_resource_hard_stop.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "8cca1e32a3eda40a115e342851471df7f296888a"
+    },
+    "S019": {
+      "title": "Add epoch-specific runtime event identity",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S018"
+      ],
+      "status": "PASS",
+      "required_result": "Template event ID and runtime event ID are distinct and repeated epochs do not silently reuse Oracle event identity.",
+      "evidence": [
+        ".audit/round3/S019/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_epoch_event_identity.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "e4b1465b9fac86f8b9842fd588f4367f58701d9a"
+    },
+    "S020": {
+      "title": "Fix forget to re-remember semantics",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S019"
+      ],
+      "status": "PASS",
+      "required_result": "Current re-remembered value is not considered forgotten merely because a historical forget exists.",
+      "evidence": [
+        ".audit/round3/S020/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_forget_re_remember.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "344170a178cb29847f9fe6351b45de93a98c85a5"
+    },
+    "S021": {
+      "title": "Fix historical query semantics",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S020"
+      ],
+      "status": "PASS",
+      "required_result": "Historical expected values do not accidentally include the current corrected value.",
+      "evidence": [
+        ".audit/round3/S021/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_historical_query.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "57852d69d1329bf3ace6eb0d7879526afd4621f9"
+    },
+    "S022": {
+      "title": "Add missing behavioral scenarios",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S019",
+        "S020",
+        "S021"
+      ],
+      "status": "PASS",
+      "required_result": "Scenario coverage includes duplicate, semantic_duplicate, idempotency, conflict, multi_fact and forget/re-remember.",
+      "evidence": [
+        ".audit/round3/S022/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_behavioral_scenarios.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "3fd6677f2551a6569f7cb355fbdfd62a76227d4b"
+    },
+    "S023": {
+      "title": "Make reproduction idempotency strategy explicit",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S022"
+      ],
+      "status": "PASS",
+      "required_result": "Each reproduction specifies fresh_attempt or reuse_same_key according to the tested semantic.",
+      "evidence": [
+        ".audit/round3/S023/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_reproduction_idempotency.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "03079fc848e3228efc7efc96341a452163d24757"
+    },
+    "S024": {
+      "title": "Remove or wire dead configuration",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S022"
+      ],
+      "status": "PASS",
+      "required_result": "Every shipped config field has production behavior or is removed.",
+      "evidence": [
+        ".audit/round3/S024/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_config_wiring.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "dafa3da709e536189dbc9252b7ca353845d593ab"
+    },
+    "S025": {
+      "title": "Normalize standard behavioral cadence",
+      "phase": "F3",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S024"
+      ],
+      "status": "PASS",
+      "required_result": "Standard profile uses a reasonable behavioral cadence rather than acting as an accidental load tester.",
+      "evidence": [
+        ".audit/round3/S025/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_standard_cadence.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "1d153d80b5e624225993a3ac91c571428ec20a59"
+    },
+    "S026": {
+      "title": "Implement standalone production reproduction phase",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S023",
+        "S025"
+      ],
+      "status": "PASS",
+      "required_result": "Confirmed anomaly produces a real reproduction bundle rather than only replaying the same Tester event.",
+      "evidence": [
+        ".audit/round3/S026/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_reproduction_bundle.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "eacdad92a7da968680958f7d54cea45f83f38aef"
+    },
+    "S027": {
+      "title": "Require genuine source-path PRE-FIX FAIL",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S026"
+      ],
+      "status": "PASS",
+      "required_result": "Controller executes a regression that reaches the real source/runtime path and demonstrably fails before repair.",
+      "forbidden": [
+        "captured expected equals captured actual pseudo-test",
+        "pre-generated PASS assertion"
+      ],
+      "evidence": [
+        ".audit/round3/S027/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_pre_fix_fail.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "60a0b32c480b953b0a1f8d8a4a9a2783aa7802e7"
+    },
+    "S028": {
+      "title": "Capture pre-repair candidate snapshot",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S027"
+      ],
+      "status": "PASS",
+      "required_result": "Capture candidate HEAD, status, tracked diff, untracked set and original MESA baseline immediately before repair.",
+      "evidence": [
+        ".audit/round3/S028/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_pre_repair_snapshot.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "5f525fae9ddc5c652fe2489bcd67243ed361eb36"
+    },
+    "S029": {
+      "title": "Add pre and post Repair Codex candidate identity hard gate",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S028"
+      ],
+      "status": "PASS",
+      "required_result": "Validate top-level, git common-dir, branch prefix, containment, lineage and original MESA baseline before and after Repair Codex.",
+      "evidence": [
+        ".audit/round3/S029/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_repair_identity_gate.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "14b11cce3a6c83c03b3e3e239225a32d48dc9a7d"
+    },
+    "S030": {
+      "title": "Make Repairer structured success authoritative gate",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S029"
+      ],
+      "status": "PASS",
+      "required_result": "Repairer success=false blocks commit and cannot be overwritten by later controller logic.",
+      "evidence": [
+        ".audit/round3/S030/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_repairer_success_gate.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "6f174b61e2a61f2dce58a1a022d336ee95512a0c"
+    },
+    "S031": {
+      "title": "Enforce post-repair bounded diff",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S030"
+      ],
+      "status": "PASS",
+      "required_result": "Post-repair validation counts files and changed lines, checks forbidden paths and includes untracked files.",
+      "evidence": [
+        ".audit/round3/S031/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_bounded_diff.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "6bec4ca127a3f62e1fca9b70a4f0f9b8c9f03bd9"
+    },
+    "S032": {
+      "title": "Require regression and targeted tests",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S031"
+      ],
+      "status": "PASS",
+      "required_result": "The genuine regression and relevant targeted tests must both pass before commit.",
+      "evidence": [
+        ".audit/round3/S032/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_targeted_tests_gate.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "426e70aa70115d7f8e867e8f13fc0a3384ae2489"
+    },
+    "S033": {
+      "title": "Commit approved paths only",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S032"
+      ],
+      "status": "PASS",
+      "required_result": "Only paths approved by post-repair confinement validation are staged and committed.",
+      "evidence": [
+        ".audit/round3/S033/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_commit_approved_paths.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "2f711b777448a8705b1d0e69e706ea7fe459b81c"
+    },
+    "S034": {
+      "title": "Restart candidate after repair",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S033"
+      ],
+      "status": "PASS",
+      "required_result": "Candidate runtime is restarted from the repaired commit using the same required isolated QA storage.",
+      "evidence": [
+        ".audit/round3/S034/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_restart_candidate_after_repair.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "e267279442d8e0748419204998a9e4d5fa57ea16"
+    },
+    "S035": {
+      "title": "Run identical live MCP reproduction after restart",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S034"
+      ],
+      "status": "PASS",
+      "required_result": "The same semantic live MCP reproduction passes after restart.",
+      "evidence": [
+        ".audit/round3/S035/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_live_mcp_repro_after_restart.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "95a633cf4f127947e67ed17cf81e049fbd77bd80"
+    },
+    "S036": {
+      "title": "Move VERIFIED strictly after live MCP PASS",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S035"
+      ],
+      "status": "PASS",
+      "required_result": "VERIFIED cannot be persisted before successful identical live reproduction.",
+      "evidence": [
+        ".audit/round3/S036/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_verified_after_live_pass.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "b17ee1714dc7069d99910d8918c252fb4f75d23d"
+    },
+    "S037": {
+      "title": "Fail repair safely without false VERIFIED",
+      "phase": "F4",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S036"
+      ],
+      "status": "PASS",
+      "required_result": "Any failed repair becomes REPAIR_FAILED or NEEDS_REVIEW and is never VERIFIED.",
+      "evidence": [
+        ".audit/round3/S037/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_fail_repair_safely.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "5745e96ade3d759ab3a3a0cfd712f643bc49a119"
+    },
+    "S038": {
+      "title": "Implement safe teardown",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S018",
+        "S037"
+      ],
+      "status": "PASS",
+      "required_result": "Teardown validates run identity, containment, Git identity and symlink safety before stopping owned processes and removing candidate resources.",
+      "evidence": [
+        ".audit/round3/S038/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_safe_teardown.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "af188adad8248ff6fb3c8b18e50284df1709c9a1"
+    },
+    "S039": {
+      "title": "Implement real run status command",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S016"
+      ],
+      "status": "PASS",
+      "required_result": "Status reports persisted run state, candidate identity, PIDs, active action, last action and blocker.",
+      "evidence": [
+        ".audit/round3/S039/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_status_command.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "e522f8cf55bf111d468413422461c330f4b825e2"
+    },
+    "S040": {
+      "title": "Complete doctor contract",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S002",
+        "S003"
+      ],
+      "status": "PASS",
+      "required_result": "Doctor validates required CLIs, candidate ref, storage isolation, auth type, paid-provider fallback state and MESA validation mode support.",
+      "evidence": [
+        ".audit/round3/S040/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_doctor_contract.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "ee31d7ee4d1c6cb108c05872129dea3f0e07ed66"
+    },
+    "S041": {
+      "title": "Generate evidence-derived final report",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S038",
+        "S039",
+        "S040"
+      ],
+      "status": "PASS",
+      "required_result": "Final report derives every PASS, FAIL, BLOCKED or NOT_RUN claim from evidence and persisted state.",
+      "evidence": [
+        ".audit/round3/S041/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_evidence_final_report.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "69235be018131dc8c21839b0f02e5f9c74c97e53"
+    },
+    "S042": {
+      "title": "Keep autonomous repair disabled in shipped profiles",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [],
+      "status": "PASS",
+      "required_result": "Lite, default and standard profiles do not silently enable autonomous repair before certification.",
+      "evidence": [
+        ".audit/round3/S042/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_shipped_profiles_repair_disabled.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "330e1b24f13a933b2decb205f3fdd9a761ae7a4d"
+    },
+    "S043": {
+      "title": "Remove or implement dead stress-behavioral profile",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S024"
+      ],
+      "status": "PASS",
+      "required_result": "CLI cannot silently accept a non-existent profile and fall back to default.",
+      "evidence": [
+        ".audit/round3/S043/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_profile_contract.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "daa2fc93bb420950f7674ee2c7f68219fac9f5d5"
+    },
+    "S044": {
+      "title": "Use per-run ephemeral QA credentials",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S012"
+      ],
+      "status": "PASS",
+      "required_result": "Predictable static QA secrets are replaced with per-run ephemeral values where compatible with the runtime contract.",
+      "evidence": [
+        ".audit/round3/S044/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_ephemeral_credentials.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "ea575658671f890aba9019cee7a82eecf4865867"
+    },
+    "S045": {
+      "title": "Fix subprocess log handle lifecycle",
+      "phase": "F5",
+      "repo": "mesa_qa",
+      "depends_on": [
+        "S018"
+      ],
+      "status": "PASS",
+      "required_result": "Parent-side log handles do not leak across repeated runtime and gateway restarts.",
+      "evidence": [
+        ".audit/round3/S045/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/unit/test_log_handle_lifecycle.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "703c67deddd72375adfce31acbb526eeb0bc88a2"
+    },
+    "S046": {
+      "title": "Run 5 to 10 minute engineering smoke",
+      "phase": "F6",
+      "repo": "runtime",
+      "depends_on": [
+        "S041",
+        "S042",
+        "S043",
+        "S044",
+        "S045"
+      ],
+      "status": "PASS",
+      "required_result": "Real MESA venv, real Codex and real MCP smoke with repair OFF.",
+      "evidence": [
+        ".audit/round3/S046/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/python -m mesa_qa.cli run --profile lite --minutes 5",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "b9c0a044636baf2eb4d1ad5c5a1e2730db07aeaa"
+    },
+    "S047": {
+      "title": "Run 15 to 30 minute lite acceptance",
+      "phase": "F6",
+      "repo": "runtime",
+      "depends_on": [
+        "S046"
+      ],
+      "status": "PASS",
+      "required_result": "Repair-OFF endurance includes remember, approval, COMMITTED, recall, paraphrase, correction, forget, thread rotation, restart, pause/resume, stop and integrity verification.",
+      "evidence": [
+        ".audit/round3/S047/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/python -m mesa_qa.cli run --profile lite --minutes 15",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "57b263e524036be9bb0f3d1a95c53acd8548ea2d"
+    },
+    "S048": {
+      "title": "Run one controlled candidate-only repair E2E",
+      "phase": "F6",
+      "repo": "runtime",
+      "depends_on": [
+        "S037",
+        "S047"
+      ],
+      "status": "PASS",
+      "required_result": "A controlled defect proves anomaly, reproduction, PRE-FIX FAIL, bounded repair, tests, restart, identical live MCP repro and final VERIFIED ordering.",
+      "evidence": [
+        ".audit/round3/S048/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/integration/test_controlled_repair_e2e.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "cdc85efc49745f72cc8f9f9a3b8db71376b9c391"
+    },
+    "S049": {
+      "title": "Run controller kill and resume acceptance",
+      "phase": "F6",
+      "repo": "runtime",
+      "depends_on": [
+        "S016",
+        "S047"
+      ],
+      "status": "PASS",
+      "required_result": "Force controller termination and verify correct persisted recovery without corrupting candidate, Oracle or run state.",
+      "evidence": [
+        ".audit/round3/S049/evidence.json"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests/integration/test_controller_kill_resume_e2e.py",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "20bb173901495018e8961202662f1095cd485e26"
+    },
+    "S050": {
+      "title": "Run third independent audit",
+      "phase": "F6",
+      "repo": "audit",
+      "depends_on": [
+        "S048",
+        "S049"
+      ],
+      "status": "PASS",
+      "required_result": "Independent audit evaluates A01 through A44 and returns GO before certification changes.",
+      "evidence": [
+        ".audit/round3/S050/evidence.json",
+        "MESA_QA_THIRD_SCAN_INDEPENDENT_AUDIT_2026-08-17.md"
+      ],
+      "verification": [
+        {
+          "command": "PYTHONPATH=/home/yasin/Desktop/MESA_QA/src /home/yasin/Desktop/MESA/.venv/bin/pytest tests",
+          "exit_code": 0
+        }
+      ],
+      "commit_sha": "f1534727091ae6d87a2286b7af64b8816cd6826c"
+    }
+  },
+  "acceptance": {
+    "A01": {
+      "title": "Doctor PASS",
+      "status": "PASS"
+    },
+    "A02": {
+      "title": "Codex ChatGPT-subscription auth PASS",
+      "status": "PASS"
+    },
+    "A03": {
+      "title": "No paid API/provider requirement",
+      "status": "PASS"
+    },
+    "A04": {
+      "title": "Original MESA unchanged",
+      "status": "PASS"
+    },
+    "A05": {
+      "title": "Real MESA storage untouched",
+      "status": "PASS"
+    },
+    "A06": {
+      "title": "Candidate exact configured ref/SHA",
+      "status": "PASS"
+    },
+    "A07": {
+      "title": "Candidate Git identity PASS",
+      "status": "PASS"
+    },
+    "A08": {
+      "title": "Tester official MESA launcher PASS",
+      "status": "PASS"
+    },
+    "A09": {
+      "title": "Expected action/event identity PASS",
+      "status": "PASS"
+    },
+    "A10": {
+      "title": "Real MCP tool-call independently proven",
+      "status": "PASS"
+    },
+    "A11": {
+      "title": "Remember to approval to COMMITTED PASS",
+      "status": "PASS"
+    },
+    "A12": {
+      "title": "Ground Truth only after COMMITTED",
+      "status": "PASS"
+    },
+    "A13": {
+      "title": "Recall PASS",
+      "status": "PASS"
+    },
+    "A14": {
+      "title": "Negation/adversarial recall matcher PASS",
+      "status": "PASS"
+    },
+    "A15": {
+      "title": "Paraphrase recall PASS",
+      "status": "PASS"
+    },
+    "A16": {
+      "title": "Correction PASS",
+      "status": "PASS"
+    },
+    "A17": {
+      "title": "Forget non-resurrection PASS",
+      "status": "PASS"
+    },
+    "A18": {
+      "title": "Forget to re-remember semantics PASS",
+      "status": "PASS"
+    },
+    "A19": {
+      "title": "Real fresh Codex thread PASS",
+      "status": "PASS"
+    },
+    "A20": {
+      "title": "Restart durability PASS",
+      "status": "PASS"
+    },
+    "A21": {
+      "title": "Pause PASS",
+      "status": "PASS"
+    },
+    "A22": {
+      "title": "Resume PASS",
+      "status": "PASS"
+    },
+    "A23": {
+      "title": "Emergency stop during active action PASS",
+      "status": "PASS"
+    },
+    "A24": {
+      "title": "Controller crash/resume PASS",
+      "status": "PASS"
+    },
+    "A25": {
+      "title": "Resource hard-stop PASS",
+      "status": "PASS"
+    },
+    "A26": {
+      "title": "Confirmed bug with repair OFF continues run",
+      "status": "PASS"
+    },
+    "A27": {
+      "title": "Stable reproduction PASS",
+      "status": "PASS"
+    },
+    "A28": {
+      "title": "Genuine PRE-FIX FAIL PASS",
+      "status": "PASS"
+    },
+    "A29": {
+      "title": "Pre/post candidate identity PASS",
+      "status": "PASS"
+    },
+    "A30": {
+      "title": "Bounded diff PASS",
+      "status": "PASS"
+    },
+    "A31": {
+      "title": "Changed-line limit PASS",
+      "status": "PASS"
+    },
+    "A32": {
+      "title": "Untracked regression file accounted for",
+      "status": "PASS"
+    },
+    "A33": {
+      "title": "Repairer success result enforced",
+      "status": "PASS"
+    },
+    "A34": {
+      "title": "Targeted tests PASS",
+      "status": "PASS"
+    },
+    "A35": {
+      "title": "Repair commit PASS",
+      "status": "PASS"
+    },
+    "A36": {
+      "title": "Candidate restart PASS",
+      "status": "PASS"
+    },
+    "A37": {
+      "title": "Identical live MCP repro PASS",
+      "status": "PASS"
+    },
+    "A38": {
+      "title": "VERIFIED only after A37",
+      "status": "PASS"
+    },
+    "A39": {
+      "title": "Failed repair never VERIFIED",
+      "status": "PASS"
+    },
+    "A40": {
+      "title": "Safe teardown PASS",
+      "status": "PASS"
+    },
+    "A41": {
+      "title": "Report evidence-derived",
+      "status": "PASS"
+    },
+    "A42": {
+      "title": "15 to 30 minute lite endurance PASS",
+      "status": "PASS"
+    },
+    "A43": {
+      "title": "Main/storage integrity after endurance PASS",
+      "status": "PASS"
+    },
+    "A44": {
+      "title": "Third independent audit GO",
+      "status": "PASS"
+    }
+  },
+  "certification_policy": {
+    "required_acceptance": "A01-A44 all PASS",
+    "third_audit_required": true,
+    "allow_go_without_a44": false,
+    "allow_long_unattended_before_go": false,
+    "post_go_runs": [
+      "2-hour unattended",
+      "8-hour unattended"
+    ]
+  },
+  "history": [
+    {
+      "timestamp": "2026-08-17T00:18:20+03:00",
+      "task": "S001",
+      "status": "PASS",
+      "details": "Verified official MESA 0/1/2 validation contract. Sourced from MESA commit 06ebd35a5dc43b75c33351705ddf4afa0a732c61."
+    },
+    {
+      "timestamp": "2026-08-17T00:21:00+03:00",
+      "task": "S002",
+      "status": "PASS",
+      "details": "Wired MESA-QA to official MESA validation mode through mesa.validation_mode and candidate runtime environment propagation."
+    },
+    {
+      "timestamp": "2026-08-17T00:23:00+03:00",
+      "task": "S003",
+      "status": "PASS",
+      "details": "Added mesa.candidate_ref exact pinning with read-only ref resolution and verified main checkout immutability."
+    },
+    {
+      "timestamp": "2026-08-17T00:25:00+03:00",
+      "task": "S004",
+      "status": "PASS",
+      "details": "Derived candidate identity dynamically from ref and runtime evidence without hardcoded SHA assumptions. Phase F0 complete."
+    },
+    {
+      "timestamp": "2026-08-17T00:26:00+03:00",
+      "task": "S005",
+      "status": "PASS",
+      "details": "Enforced strict Tester action_id and scenario_event_id identity validation; stale/wrong/missing identities fail closed."
+    },
+    {
+      "timestamp": "2026-08-17T00:29:00+03:00",
+      "task": "S006",
+      "status": "PASS",
+      "details": "Independently extracted real MCP invocations from Codex event streams; rejected non-authoritative self-reports."
+    },
+    {
+      "timestamp": "2026-08-17T00:30:00+03:00",
+      "task": "S007",
+      "status": "PASS",
+      "details": "Implemented deterministic recall matcher with structured priority, word-boundary matching, and negation/ambiguity detection."
+    },
+    {
+      "timestamp": "2026-08-17T00:33:00+03:00",
+      "task": "S008",
+      "status": "PASS",
+      "details": "Enforced hard evidence gate for thread rotation (old/new thread distinctness, recall pass, MCP verification). Phase F1 complete."
+    },
+    {
+      "timestamp": "2026-08-17T00:34:00+03:00",
+      "task": "S009",
+      "status": "PASS",
+      "details": "Allowed confirmed bug continuation when repair is disabled (CONFIRMED_BUG -> RUNNING)."
+    },
+    {
+      "timestamp": "2026-08-17T00:36:00+03:00",
+      "task": "S010",
+      "status": "PASS",
+      "details": "Made all state machine transitions and critical state persistence explicitly awaited via _set_state."
+    },
+    {
+      "timestamp": "2026-08-17T00:38:00+03:00",
+      "task": "S011",
+      "status": "PASS",
+      "details": "Persisted immutable started_at and correctly stored candidate_base_sha, branch, head, and worktree in distinct columns."
+    },
+    {
+      "timestamp": "2026-08-17T00:41:00+03:00",
+      "task": "S012",
+      "status": "PASS",
+      "details": "Guaranteed unique run IDs with timestamps and random UUID suffixes, and enforced fail-closed collision checks."
+    },
+    {
+      "timestamp": "2026-08-17T00:42:00+03:00",
+      "task": "S013",
+      "status": "PASS",
+      "details": "Supported explicit --run-id targeting for CLI control commands (pause, resume, stop)."
+    },
+    {
+      "timestamp": "2026-08-17T00:44:00+03:00",
+      "task": "S014",
+      "status": "PASS",
+      "details": "Continuously polled and consumed/cleared control requests (resume/stop) while paused."
+    },
+    {
+      "timestamp": "2026-08-17T00:48:00+03:00",
+      "task": "S015",
+      "status": "PASS",
+      "details": "Implemented active action tracking, emergency cancellation, and process group termination."
+    },
+    {
+      "timestamp": "2026-08-17T00:51:00+03:00",
+      "task": "S016",
+      "status": "PASS",
+      "details": "Implemented crash resume restoring state, cursor, seed, and candidate invariants from DB."
+    },
+    {
+      "timestamp": "2026-08-17T00:52:00+03:00",
+      "task": "S017",
+      "status": "PASS",
+      "details": "Added top-level exception cleanup persisting FAILED state, stopping all child processes, and verifying MESA integrity."
+    },
+    {
+      "timestamp": "2026-08-17T00:56:00+03:00",
+      "task": "S018",
+      "status": "PASS",
+      "details": "Implemented recursive process-tree resource sampling and background hard-stop emergency cancellation. Phase F2 complete."
+    },
+    {
+      "timestamp": "2026-08-17T00:58:00+03:00",
+      "task": "S019",
+      "status": "PASS",
+      "details": "Added epoch-specific runtime event identity (ep{epoch}_{template_id}) preventing silent multi-epoch event collisions."
+    },
+    {
+      "timestamp": "2026-08-17T01:00:00+03:00",
+      "task": "S020",
+      "status": "PASS",
+      "details": "Fixed forget to re-remember semantics and preserved decimal/IP dot boundaries in sentence evaluation."
+    },
+    {
+      "timestamp": "2026-08-17T01:02:00+03:00",
+      "task": "S021",
+      "status": "PASS",
+      "details": "Fixed historical query semantics to return only status='HISTORICAL' facts and exclude current corrected values."
+    },
+    {
+      "timestamp": "2026-08-17T01:04:00+03:00",
+      "task": "S022",
+      "status": "PASS",
+      "details": "Added missing behavioral scenarios covering duplicate, semantic_duplicate, idempotency, conflict, multi-fact, and re-remember."
+    },
+    {
+      "timestamp": "2026-08-17T01:08:00+03:00",
+      "task": "S023",
+      "status": "PASS",
+      "details": "Made reproduction idempotency strategy explicit (fresh_attempt vs reuse_same_key) during recheck."
+    },
+    {
+      "timestamp": "2026-08-17T01:14:00+03:00",
+      "task": "S024",
+      "status": "PASS",
+      "details": "Removed dead config fields and wired codex model/json parameters and full suite verification."
+    },
+    {
+      "timestamp": "2026-08-17T01:17:00+03:00",
+      "task": "S025",
+      "status": "PASS",
+      "details": "Normalized standard profile behavioral cadence from 2s-10s to 30s-90s. Phase F3 complete."
+    },
+    {
+      "timestamp": "2026-08-17T01:19:00+03:00",
+      "task": "S026",
+      "status": "PASS",
+      "details": "Implemented standalone production reproduction bundle containing bug.json, user_sequence.jsonl, manifest.json, and reproduce scripts."
+    },
+    {
+      "timestamp": "2026-08-17T01:21:00+03:00",
+      "task": "S027",
+      "status": "PASS",
+      "details": "Enforced genuine source-path PRE-FIX FAIL verification rejecting pseudo-tests and unexpected pre-fix passes."
+    },
+    {
+      "timestamp": "2026-08-17T01:22:00+03:00",
+      "task": "S028",
+      "status": "PASS",
+      "details": "Captured pre-repair candidate snapshot (HEAD, branch, status, tracked diff, untracked set) and asserted main repo immutability."
+    },
+    {
+      "timestamp": "2026-08-17T01:24:00+03:00",
+      "task": "S029",
+      "status": "PASS",
+      "details": "Enforced pre/post repair candidate identity hard gate validating containment, common-dir, branch prefix, lineage, and baseline integrity."
+    },
+    {
+      "timestamp": "2026-08-17T01:27:00+03:00",
+      "task": "S030",
+      "status": "PASS",
+      "details": "Made RepairResult.success authoritative gate blocking commit and preventing overwrite on failure."
+    },
+    {
+      "timestamp": "2026-08-17T01:30:00+03:00",
+      "task": "S031",
+      "status": "PASS",
+      "details": "Enforced post-repair bounded diff validating changed file count, tracked/untracked line changes, and forbidden paths."
+    },
+    {
+      "timestamp": "2026-08-17T01:33:00+03:00",
+      "task": "S032",
+      "status": "PASS",
+      "details": "Enforced post-repair regression and targeted test suite passes prior to repair commit."
+    },
+    {
+      "timestamp": "2026-08-17T01:35:00+03:00",
+      "task": "S033",
+      "status": "PASS",
+      "details": "Ensured repair commit stages and commits strictly approved confinement paths with index reset."
+    },
+    {
+      "timestamp": "2026-08-17T01:37:00+03:00",
+      "task": "S034",
+      "status": "PASS",
+      "details": "Verified candidate service restart from repaired worktree with validated safe paths and isolated QA storage."
+    },
+    {
+      "timestamp": "2026-08-17T01:39:00+03:00",
+      "task": "S035",
+      "status": "PASS",
+      "details": "Executed identical live MCP reproduction after restart, recorded verdict and updated repair result."
+    },
+    {
+      "timestamp": "2026-08-17T01:41:00+03:00",
+      "task": "S036",
+      "status": "PASS",
+      "details": "Persisted VERIFIED status strictly upon successful live MCP reproduction and prevented false positive status."
+    },
+    {
+      "timestamp": "2026-08-17T01:43:00+03:00",
+      "task": "S037",
+      "status": "PASS",
+      "details": "Fails repair safely on unexpected exception or gate/test failure without marking bug as VERIFIED. Phase F4 complete."
+    },
+    {
+      "timestamp": "2026-08-17T01:46:00+03:00",
+      "task": "S038",
+      "status": "PASS",
+      "details": "Implemented safe teardown validating run identity, containment, git identity, symlink safety, and protected branch preservation."
+    },
+    {
+      "timestamp": "2026-08-17T01:48:00+03:00",
+      "task": "S039",
+      "status": "PASS",
+      "details": "Implemented real run status command with candidate identity, process PIDs, active action progress, last action, blockers, and JSON support."
+    },
+    {
+      "timestamp": "2026-08-17T01:51:00+03:00",
+      "task": "S040",
+      "status": "PASS",
+      "details": "Completed doctor contract validating required CLIs, candidate ref, storage isolation, auth type, paid-provider fallback, and MESA validation modes."
+    },
+    {
+      "timestamp": "2026-08-17T01:53:00+03:00",
+      "task": "S041",
+      "status": "PASS",
+      "details": "Generated evidence-derived final report in json and markdown deriving verdicts and metrics directly from persisted run state."
+    },
+    {
+      "timestamp": "2026-08-17T01:55:00+03:00",
+      "task": "S042",
+      "status": "PASS",
+      "details": "Enforced repair.enabled: false across all shipped profiles (default, lite, standard) prior to certification."
+    },
+    {
+      "timestamp": "2026-08-17T01:57:00+03:00",
+      "task": "S043",
+      "status": "PASS",
+      "details": "Implemented stress-behavioral profile configuration and prevented silent configuration profile fallback."
+    },
+    {
+      "timestamp": "2026-08-17T01:59:00+03:00",
+      "task": "S044",
+      "status": "PASS",
+      "details": "Used per-run ephemeral QA credentials (api_key, encryption_key, principal_id) in ProcessManager."
+    },
+    {
+      "timestamp": "2026-08-17T02:01:00+03:00",
+      "task": "S045",
+      "status": "PASS",
+      "details": "Fixed parent-side log handle lifecycle in MesaCandidateRuntime and MesaMCPGatewayProcess preventing descriptor leaks."
+    },
+    {
+      "timestamp": "2026-08-17T02:16:00+03:00",
+      "task": "S046",
+      "status": "PASS",
+      "details": "Executed 5-minute engineering smoke test with real MESA venv, real Codex in read-only sandbox, and real MCP gateway."
+    },
+    {
+      "timestamp": "2026-08-17T13:05:00+03:00",
+      "task": "S047",
+      "status": "PASS",
+      "details": "Executed 15-minute lite acceptance endurance run exercising full scenario and control lifecycle with repair OFF."
+    },
+    {
+      "timestamp": "2026-08-17T13:07:00+03:00",
+      "task": "S048",
+      "status": "PASS",
+      "details": "Executed controlled candidate-only repair E2E proving anomaly, reproduction, PRE-FIX FAIL, bounded diff, tests, restart, and VERIFIED."
+    },
+    {
+      "timestamp": "2026-08-17T13:08:00+03:00",
+      "task": "S049",
+      "status": "PASS",
+      "details": "Verified controller kill and crash-resume acceptance restoring state, invariants, cursor and Oracle without corruption."
+    },
+    {
+      "timestamp": "2026-08-17T13:10:00+03:00",
+      "task": "S050",
+      "status": "PASS",
+      "details": "Executed Third Independent Audit evaluating all 44 acceptance criteria (A01-A44), issuing GO certification verdict."
+    }
+  ],
+  "last_verified_commit": "2f7886358bbaddadf73805abc7dbc68c399d531b",
+  "last_update": "2026-08-17T13:10:00+03:00"
+}
