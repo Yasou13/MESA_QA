@@ -1,9 +1,11 @@
+mesa:
+  validation_mode: 0
+  external_provider_enabled: false
+
 run:
   profile: lite
   cadence_seconds_min: 45
   cadence_seconds_max: 120
-  parallel_actions: 1
-  restart_every_minutes: 90
 
 repair:
   enabled: false
@@ -11,3 +13,4 @@ repair:
 
 resources:
   sample_seconds: 60
+

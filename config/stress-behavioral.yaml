@@ -1,0 +1,13 @@
+run:
+  profile: stress-behavioral
+  cadence_seconds_min: 5
+  cadence_seconds_max: 15
+
+repair:
+  enabled: false
+  max_repairs_per_run: 20
+
+resources:
+  sample_seconds: 15
+  warn_rss_mb: 8000
+  hard_stop_rss_mb: 14000

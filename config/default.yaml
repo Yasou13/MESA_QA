@@ -8,11 +8,12 @@ mesa:
   model_enabled: true
   external_provider_enabled: true
   llm_provider: mock
+  validation_mode: 0
+  candidate_ref: null
 
 candidate:
   worktree_root: /home/yasin/Desktop/MESA-QA-candidate
   branch_prefix: qa/autonomous
-  reuse_existing: false
 
 run:
   duration_hours: 8
@@ -20,8 +21,6 @@ run:
   seed: 42
   cadence_seconds_min: 45
   cadence_seconds_max: 120
-  epoch_actions: 25
-  restart_every_minutes: 90
 
 codex:
   binary: codex
