@@ -135,3 +135,4 @@ git -C /home/yasin/Desktop/MESA branch -D qa/autonomous-<run_id>
 # Run all unit and integration tests
 PYTHONPATH=src /path/to/mesa-qa-python -m pytest tests/unit tests/integration/
 ```
+mehmetcan geldifffffff
